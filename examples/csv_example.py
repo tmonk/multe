@@ -179,7 +179,7 @@ def main():
     # Step 6: Compute standard errors
     print("\n6. Computing standard errors...")
     std_errs = model.compute_standard_errors(
-        result.x, X_loaded, y_single_loaded, y_dual_loaded
+        X_loaded, y_single_loaded, y_dual_loaded, result.x
     )
     std_errs_reshaped = std_errs.reshape(J - 1, K)
 

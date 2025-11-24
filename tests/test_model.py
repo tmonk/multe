@@ -238,7 +238,8 @@ class TestNegLogLikelihood:
         assert nll > 0
 
         # Gradient should also be stable
-        grad = model.gradient(flat_beta, X, y_single, y_dual)
+        single_idx, dual_idx = model._validate_data(X, y_single, y_dual)
+        grad = model._gradient(flat_beta, X, single_idx, dual_idx)
         assert np.all(np.isfinite(grad))
 
     def test_sparse_dual_input_equivalence(self):
@@ -267,7 +268,8 @@ class TestGradient:
         model = MultichoiceLogit(J, K)
 
         flat_beta = true_beta.flatten()
-        grad = model.gradient(flat_beta, X, y_single, y_dual)
+        single_idx, dual_idx = model._validate_data(X, y_single, y_dual)
+        grad = model._gradient(flat_beta, X, single_idx, dual_idx)
 
         assert grad.shape == ((J - 1) * K,)
 
@@ -278,7 +280,8 @@ class TestGradient:
         model = MultichoiceLogit(J, K)
 
         flat_beta = true_beta.flatten()
-        analytical_grad = model.gradient(flat_beta, X, y_single, y_dual)
+        single_idx, dual_idx = model._validate_data(X, y_single, y_dual)
+        analytical_grad = model._gradient(flat_beta, X, single_idx, dual_idx)
 
         # Numerical gradient
         epsilon = 1e-5
@@ -289,8 +292,8 @@ class TestGradient:
             beta_minus = flat_beta.copy()
             beta_minus[i] -= epsilon
 
-            nll_plus = model.neg_log_likelihood(beta_plus, X, y_single, y_dual)
-            nll_minus = model.neg_log_likelihood(beta_minus, X, y_single, y_dual)
+            nll_plus = model._neg_log_likelihood(beta_plus, X, single_idx, dual_idx)
+            nll_minus = model._neg_log_likelihood(beta_minus, X, single_idx, dual_idx)
 
             numerical_grad[i] = (nll_plus - nll_minus) / (2 * epsilon)
 
@@ -310,7 +313,8 @@ class TestGradient:
         flat_beta = extreme_beta.flatten()
 
         # Gradient should be finite even with clipped probabilities
-        grad = model.gradient(flat_beta, X, y_single, y_dual)
+        single_idx, dual_idx = model._validate_data(X, y_single, y_dual)
+        grad = model._gradient(flat_beta, X, single_idx, dual_idx)
 
         assert np.all(np.isfinite(grad))
 
@@ -323,8 +327,8 @@ class TestGradient:
             beta_minus = flat_beta.copy()
             beta_minus[i] -= epsilon
 
-            nll_plus = model.neg_log_likelihood(beta_plus, X, y_single, y_dual)
-            nll_minus = model.neg_log_likelihood(beta_minus, X, y_single, y_dual)
+            nll_plus = model._neg_log_likelihood(beta_plus, X, single_idx, dual_idx)
+            nll_minus = model._neg_log_likelihood(beta_minus, X, single_idx, dual_idx)
 
             numerical_grad[i] = (nll_plus - nll_minus) / (2 * epsilon)
 
@@ -338,10 +342,14 @@ class TestGradient:
         model = MultichoiceLogit(J, K)
 
         flat_beta = true_beta.flatten()
-        dense_grad = model.gradient(flat_beta, X, y_single, y_dual)
+        single_dense, dual_dense = model._validate_data(X, y_single, y_dual)
+        dense_grad = model._gradient(flat_beta, X, single_dense, dual_dense)
 
         dual_rows, dual_s, dual_t = np.nonzero(y_dual)
-        tuple_grad = model.gradient(flat_beta, X, y_single, (dual_rows, dual_s, dual_t))
+        single_tuple, dual_tuple = model._validate_data(
+            X, y_single, (dual_rows, dual_s, dual_t)
+        )
+        tuple_grad = model._gradient(flat_beta, X, single_tuple, dual_tuple)
 
         assert np.allclose(dense_grad, tuple_grad)
 
@@ -356,7 +364,7 @@ class TestComputeStandardErrors:
         model = MultichoiceLogit(J, K)
 
         flat_beta = true_beta.flatten()
-        std_errs = model.compute_standard_errors(flat_beta, X, y_single, y_dual)
+        std_errs = model.compute_standard_errors(X, y_single, y_dual, flat_beta)
 
         assert std_errs.shape == ((J - 1) * K,)
 
@@ -367,7 +375,7 @@ class TestComputeStandardErrors:
         model = MultichoiceLogit(J, K)
 
         flat_beta = true_beta.flatten()
-        std_errs = model.compute_standard_errors(flat_beta, X, y_single, y_dual)
+        std_errs = model.compute_standard_errors(X, y_single, y_dual, flat_beta)
 
         # Standard errors should be positive (or NaN if singular)
         assert np.all((std_errs > 0) | np.isnan(std_errs))
@@ -382,7 +390,7 @@ class TestComputeStandardErrors:
         flat_beta = np.zeros((J - 1) * K)
 
         # Should produce RuntimeWarning in some cases (not always)
-        std_errs = model.compute_standard_errors(flat_beta, X, y_single, y_dual)
+        std_errs = model.compute_standard_errors(X, y_single, y_dual, flat_beta)
         assert std_errs.shape == ((J - 1) * K,)
 
 
@@ -511,12 +519,18 @@ class TestEndToEndEstimation:
         model = MultichoiceLogit(J, K)
 
         init_beta = np.zeros((J - 1) * K)
+        single_idx, dual_idx = model._validate_data(X, y_single, y_dual)
+
+        def fun(beta):
+            return model._neg_log_likelihood(beta, X, single_idx, dual_idx)
+
+        def jac(beta):
+            return model._gradient(beta, X, single_idx, dual_idx)
 
         result = minimize(
-            fun=model.neg_log_likelihood,
-            jac=model.gradient,
+            fun=fun,
+            jac=jac,
             x0=init_beta,
-            args=(X, y_single, y_dual),
             method="BFGS",
             options={"gtol": 1e-5, "maxiter": 1000},
         )
@@ -556,7 +570,7 @@ class TestHelpers:
         flat_beta = true_beta.flatten()
 
         contributions = model.log_likelihood_contributions(
-            flat_beta, X, y_single, y_dual
+            X, y_single, y_dual, flat_beta
         )
         total = np.sum(contributions)
         direct = -model.neg_log_likelihood(flat_beta, X, y_single, y_dual)
@@ -570,9 +584,9 @@ class TestHelpers:
         model = MultichoiceLogit(J, K)
 
         flat_beta = true_beta.flatten()
-        std_errs_default = model.compute_standard_errors(flat_beta, X, y_single, y_dual)
+        std_errs_default = model.compute_standard_errors(X, y_single, y_dual, flat_beta)
         std_errs_smaller = model.compute_standard_errors(
-            flat_beta, X, y_single, y_dual, epsilon=1e-6
+            X, y_single, y_dual, flat_beta, epsilon=1e-6
         )
 
         assert std_errs_default.shape == std_errs_smaller.shape == ((J - 1) * K,)

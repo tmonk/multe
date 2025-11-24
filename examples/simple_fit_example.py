@@ -42,7 +42,7 @@ def main():
     # Compute standard errors
     print("\n5. Computing standard errors...")
     flat_coef = model.coef_.flatten()
-    std_errs = model.compute_standard_errors(flat_coef, X, y_single, y_dual)
+    std_errs = model.compute_standard_errors(X, y_single, y_dual, flat_coef)
     std_errs = std_errs.reshape(J - 1, K)
 
     print("\n   Coefficients with Standard Errors:")

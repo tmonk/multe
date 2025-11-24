@@ -43,7 +43,7 @@ def main():
 
     # Compute Standard Errors
     print("Computing Standard Errors...")
-    std_errs = model.compute_standard_errors(res.x, X, y_single, y_dual)
+    std_errs = model.compute_standard_errors(X, y_single, y_dual, res.x)
 
     est_beta = res.x.reshape(J - 1, K)
     std_errs_reshaped = std_errs.reshape(J - 1, K)

@@ -116,8 +116,9 @@ Model class with methods:
   - Returns `self` with fitted `coef_` attribute
   - Stores optimization details in `optimization_result_`
 - `neg_log_likelihood(flat_beta, X, y_single, y_dual)` - Negative log-likelihood
-- `gradient(flat_beta, X, y_single, y_dual)` - Analytical gradient
-- `compute_standard_errors(flat_beta, X, y_single, y_dual)` - Standard errors
+- `compute_standard_errors(X, y_single, y_dual, flat_beta=None)` - Standard errors (uses fitted params by default)
+- `predict_proba(X, flat_beta=None)` - Single/dual choice probabilities
+- `log_likelihood_contributions(X, y_single, y_dual, flat_beta=None)` - Per-observation log-likelihoods
 
 ### simulate_data(N, J, K, true_beta=None, mix_ratio=0.5, seed=42)
 Generate synthetic data following the RUM framework.

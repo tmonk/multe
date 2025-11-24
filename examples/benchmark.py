@@ -28,14 +28,17 @@ def benchmark_estimation(N, J, K, mix_ratio=0.5, method="BFGS", seed=42):
     model = MultichoiceLogit(J, K)
     init_beta = np.zeros((J - 1) * K)
 
+    # Prepare indices once for timing internals
+    single_idx, dual_idx = model._validate_data(X, y_single, y_dual)
+
     # Time likelihood evaluation
     t0 = time.time()
-    _ = model.neg_log_likelihood(init_beta, X, y_single, y_dual)
+    _ = model._neg_log_likelihood(init_beta, X, single_idx, dual_idx)
     likelihood_time = time.time() - t0
 
     # Time gradient evaluation
     t0 = time.time()
-    _ = model.gradient(init_beta, X, y_single, y_dual)
+    _ = model._gradient(init_beta, X, single_idx, dual_idx)
     gradient_time = time.time() - t0
 
     # Optimize
