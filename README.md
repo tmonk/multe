@@ -10,7 +10,7 @@ This implements the model as described in Ophem, H.V., Stam, P. and Praag, B.V.,
 
 ## Installation
 
-Install from PyPI (once published):
+Install from PyPI:
 ```bash
 pip install multe
 ```
