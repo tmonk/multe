@@ -4,7 +4,8 @@ Multichoice Logit Model
 Vectorized implementation for fast and accurate MLE estimation.
 """
 
-from typing import Any, Optional
+import typing
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -47,8 +48,8 @@ class MultichoiceLogit:
         self.K = num_covariates
 
         # Fitted attributes (set by fit method)
-        self.coef_: Optional[npt.NDArray[np.float64]] = None
-        self.optimization_result_: Optional[OptimizeResult] = None
+        self.coef_: npt.NDArray[np.float64] | None = None
+        self.optimization_result_: OptimizeResult | None = None
 
     def transform_params(
         self, flat_beta: npt.NDArray[np.float64]
@@ -117,9 +118,9 @@ class MultichoiceLogit:
         X: npt.NDArray[np.float64],
         y_single: npt.NDArray[np.int8],
         y_dual: npt.NDArray[np.int8],
-        init_beta: Optional[npt.NDArray[np.float64]] = None,
+        init_beta: npt.NDArray[np.float64] | None = None,
         method: str = "L-BFGS-B",
-        options: Optional[dict[str, Any]] = None,
+        options: dict[str, Any] | None = None,
     ) -> "MultichoiceLogit":
         """
         Fit the multichoice logit model using maximum likelihood estimation.
@@ -488,4 +489,4 @@ class MultichoiceLogit:
         # Compute standard errors, setting invalid (negative variance) to NaN
         std_errs = np.sqrt(np.where(diag_cov >= 0, diag_cov, np.nan))
 
-        return std_errs
+        return typing.cast(npt.NDArray[np.float64], std_errs)

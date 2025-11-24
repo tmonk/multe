@@ -6,8 +6,6 @@ for multichoice logit models where agents can select single alternatives or pair
 Fully vectorized implementation for fast simulation.
 """
 
-from typing import Optional
-
 import numpy as np
 import numpy.typing as npt
 
@@ -16,7 +14,7 @@ def simulate_data(
     N: int,
     J: int,
     K: int,
-    true_beta: Optional[npt.NDArray[np.float64]] = None,
+    true_beta: npt.NDArray[np.float64] | None = None,
     mix_ratio: float = 0.5,
     seed: int = 42,
 ) -> tuple[
