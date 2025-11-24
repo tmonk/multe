@@ -4,10 +4,11 @@ Multichoice Logit Model
 Vectorized implementation for fast and accurate MLE estimation.
 """
 
-from typing import Tuple, Optional, Dict, Any
+from typing import Any, Optional
+
 import numpy as np
 import numpy.typing as npt
-from scipy.optimize import minimize, OptimizeResult
+from scipy.optimize import OptimizeResult, minimize
 from scipy.special import logsumexp
 
 # Numerical constants for stability and accuracy
@@ -49,7 +50,9 @@ class MultichoiceLogit:
         self.coef_: Optional[npt.NDArray[np.float64]] = None
         self.optimization_result_: Optional[OptimizeResult] = None
 
-    def transform_params(self, flat_beta: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+    def transform_params(
+        self, flat_beta: npt.NDArray[np.float64]
+    ) -> npt.NDArray[np.float64]:
         """
         Reshapes a flat parameter vector into a (J, K) matrix, handling identification.
 
@@ -76,7 +79,7 @@ class MultichoiceLogit:
 
     def calculate_utilities(
         self, X: npt.NDArray[np.float64], beta: npt.NDArray[np.float64]
-    ) -> Tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         """
         Computes the deterministic utility V and the exponentiated utility a.
 
@@ -102,7 +105,7 @@ class MultichoiceLogit:
         y_dual: npt.NDArray[np.int8],
         init_beta: Optional[npt.NDArray[np.float64]] = None,
         method: str = "L-BFGS-B",
-        options: Optional[Dict[str, Any]] = None,
+        options: Optional[dict[str, Any]] = None,
     ) -> "MultichoiceLogit":
         """
         Fit the multichoice logit model using maximum likelihood estimation.
@@ -251,10 +254,10 @@ class MultichoiceLogit:
         if np.any(single_choice_mask):
             V_sub = V[single_choice_mask]
             y_sub = y_single[single_choice_mask]
-            term1 = np.sum(y_sub * V_sub)
+            term1: float = np.sum(y_sub * V_sub)
             # Use logsumexp for numerical stability (avoids overflow in exp)
-            term2 = np.sum(logsumexp(V_sub, axis=1))
-            log_lik += (term1 - term2)
+            term2: float = np.sum(logsumexp(V_sub, axis=1))
+            log_lik += term1 - term2
 
         # 2. Handle Dual Choices
         dual_indices = np.argwhere(y_dual > 0)
@@ -353,26 +356,32 @@ class MultichoiceLogit:
             D3 = a_s + a_t + R
 
             # Probability (unclipped for gradient computation)
-            P_raw = (a_s/D1) + (a_t/D2) - ((a_s+a_t)/D3)
+            P_raw = (a_s / D1) + (a_t / D2) - ((a_s + a_t) / D3)
 
             # Clip for numerical stability (use module constant)
-            P = np.maximum(P_raw, CLIP_THRESHOLD)  # Clipped for likelihood
+            np.maximum(P_raw, CLIP_THRESHOLD)  # Clipped for likelihood
 
             # Mask for where clipping occurred (gradient should be 0)
             clipped_mask = P_raw >= CLIP_THRESHOLD
 
             # Precompute derivatives
-            dP_dVs = a_s * R * (1/(D1**2) - 1/(D3**2))  # Shape: (n_dual,)
-            dP_dVt = a_t * R * (1/(D2**2) - 1/(D3**2))  # Shape: (n_dual,)
-            common_r = (a_s+a_t)/(D3**2) - a_s/(D1**2) - a_t/(D2**2)  # Shape: (n_dual,)
+            dP_dVs = a_s * R * (1 / (D1**2) - 1 / (D3**2))  # Shape: (n_dual,)
+            dP_dVt = a_t * R * (1 / (D2**2) - 1 / (D3**2))  # Shape: (n_dual,)
+            common_r = (
+                (a_s + a_t) / (D3**2) - a_s / (D1**2) - a_t / (D2**2)
+            )  # Shape: (n_dual,)
 
             # Compute gradient contributions for s and t
             # For alternative s (gradient = 0 if probability was clipped)
-            grad_weight_s = np.where(clipped_mask, (1/P_raw) * dP_dVs, 0.0)  # Shape: (n_dual,)
+            grad_weight_s = np.where(
+                clipped_mask, (1 / P_raw) * dP_dVs, 0.0
+            )  # Shape: (n_dual,)
             grad_contrib_s = grad_weight_s[:, np.newaxis] * X_i  # Shape: (n_dual, K)
 
             # For alternative t (gradient = 0 if probability was clipped)
-            grad_weight_t = np.where(clipped_mask, (1/P_raw) * dP_dVt, 0.0)  # Shape: (n_dual,)
+            grad_weight_t = np.where(
+                clipped_mask, (1 / P_raw) * dP_dVt, 0.0
+            )  # Shape: (n_dual,)
             grad_contrib_t = grad_weight_t[:, np.newaxis] * X_i  # Shape: (n_dual, K)
 
             # Complexity: O(n_dual) - faster than O(J * n_dual) with loops
@@ -382,7 +391,9 @@ class MultichoiceLogit:
             # For alternatives that are neither s nor t (the 'r' alternatives)
             # Memory: O(n_dual * J * K) tensor, but faster than looping
             a_i = a[i_idx]  # Shape: (n_dual, J)
-            grad_weight_r = np.where(clipped_mask, (1/P_raw) * common_r, 0.0)  # Shape: (n_dual,)
+            grad_weight_r = np.where(
+                clipped_mask, (1 / P_raw) * common_r, 0.0
+            )  # Shape: (n_dual,)
 
             # Create mask: True where alternative is neither s nor t for each observation
             # Shape: (n_dual, J) - True if alternative j is 'r' for observation i
@@ -391,7 +402,7 @@ class MultichoiceLogit:
             is_r[np.arange(n_dual), t_idx] = False
 
             # Gradient contributions for 'r' alternatives (neither s nor t)
-            # 
+            #
             # For each dual choice observation i and each 'r' alternative j:
             #   grad_contrib[j] += (1/P) * common_r * a[i,j] * X[i]
             #
@@ -402,9 +413,11 @@ class MultichoiceLogit:
             #   result:        (n_dual, J, K)                   gradient contrib per obs/alt
             #
             # Memory: O(n_dual * J * K) — for large datasets, consider chunked processing
-            grad_contrib_r_all = (grad_weight_r[:, np.newaxis, np.newaxis] * # Shape: (n_dual, 1, 1)
-                                  a_i[:, :, np.newaxis] * # Shape: (n_dual, J, 1)
-                                  X_i[:, np.newaxis, :])  # Shape: (n_dual, 1, K)
+            grad_contrib_r_all = (
+                grad_weight_r[:, np.newaxis, np.newaxis]  # Shape: (n_dual, 1, 1)
+                * a_i[:, :, np.newaxis]  # Shape: (n_dual, J, 1)
+                * X_i[:, np.newaxis, :]
+            )  # Shape: (n_dual, 1, K)
 
             # Zero out contributions from s and t alternatives
             grad_contrib_r_all[~is_r] = 0
@@ -458,17 +471,23 @@ class MultichoiceLogit:
             hessian[:, j] = (grad_plus - grad_minus) / (2 * HESSIAN_EPSILON)
 
         # Variance-Covariance Matrix is inverse of Hessian
-        try:
-            cov_matrix = np.linalg.inv(hessian)
-            std_errs = np.sqrt(np.diag(cov_matrix))
-        except np.linalg.LinAlgError as e:
+        # Use pinv for stability with near-singular Hessians
+        cov_matrix = np.linalg.pinv(hessian)
+
+        # Check if diagonal elements are positive (valid variance)
+        diag_cov = np.diag(cov_matrix)
+
+        # If any variance is negative (numerical noise with singular hessian), warn
+        if np.any(diag_cov < 0):
             import warnings
 
             warnings.warn(
-                "Hessian is singular or ill-conditioned. Standard errors may be unreliable.",
+                "Hessian inverse has negative diagonal elements. Standard errors may be unreliable.",
                 RuntimeWarning,
                 stacklevel=2,
             )
-            std_errs = np.full(n_params, np.nan)
+
+        # Compute standard errors, setting invalid (negative variance) to NaN
+        std_errs = np.sqrt(np.where(diag_cov >= 0, diag_cov, np.nan))
 
         return std_errs

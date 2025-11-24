@@ -6,7 +6,8 @@ for multichoice logit models where agents can select single alternatives or pair
 Fully vectorized implementation for fast simulation.
 """
 
-from typing import Optional, Tuple
+from typing import Optional
+
 import numpy as np
 import numpy.typing as npt
 
@@ -18,7 +19,7 @@ def simulate_data(
     true_beta: Optional[npt.NDArray[np.float64]] = None,
     mix_ratio: float = 0.5,
     seed: int = 42,
-) -> Tuple[
+) -> tuple[
     npt.NDArray[np.float64],
     npt.NDArray[np.int8],
     npt.NDArray[np.int8],
@@ -64,7 +65,7 @@ def simulate_data(
         raise ValueError(f"mix_ratio must be in [0, 1], got {mix_ratio}")
     if true_beta is not None and true_beta.shape != (J - 1, K):
         raise ValueError(
-            f"true_beta must have shape ({J-1}, {K}), got {true_beta.shape}"
+            f"true_beta must have shape ({J - 1}, {K}), got {true_beta.shape}"
         )
 
     rng = np.random.default_rng(seed)
@@ -74,7 +75,7 @@ def simulate_data(
 
     # Generate or Use Parameters
     if true_beta is None:
-        true_beta_free = rng.uniform(-1, 1, (J-1, K))
+        true_beta_free = rng.uniform(-1, 1, (J - 1, K))
     else:
         true_beta_free = true_beta
 
@@ -97,8 +98,12 @@ def simulate_data(
     top_k_values = np.take_along_axis(U, top_k_indices, axis=1)
     sorted_within_top = np.argsort(top_k_values, axis=1)
 
-    best_idx = np.take_along_axis(top_k_indices, sorted_within_top[:, -1:], axis=1).flatten()
-    second_best_idx = np.take_along_axis(top_k_indices, sorted_within_top[:, -2:-1], axis=1).flatten()
+    best_idx = np.take_along_axis(
+        top_k_indices, sorted_within_top[:, -1:], axis=1
+    ).flatten()
+    second_best_idx = np.take_along_axis(
+        top_k_indices, sorted_within_top[:, -2:-1], axis=1
+    ).flatten()
 
     # Randomly assign choice mode (single vs dual) based on mix_ratio
     mode_choice = rng.binomial(1, mix_ratio, N).astype(bool)
@@ -121,7 +126,10 @@ def simulate_data(
 
         # Ensure s < t (swap if needed)
         swap_mask = s_indices > t_indices
-        s_indices[swap_mask], t_indices[swap_mask] = t_indices[swap_mask], s_indices[swap_mask]
+        s_indices[swap_mask], t_indices[swap_mask] = (
+            t_indices[swap_mask],
+            s_indices[swap_mask],
+        )
 
         y_dual[row_indices_dual, s_indices, t_indices] = 1
 

@@ -5,6 +5,7 @@ This example demonstrates the convenient fit() method for quick model estimation
 """
 
 import numpy as np
+
 from multe import MultichoiceLogit, simulate_data
 
 
@@ -29,9 +30,9 @@ def main():
     print("\n3. Fitted coefficients (model.coef_):")
     print("-" * 70)
     print(f"   Shape: {model.coef_.shape}")
-    print(f"\n   Values:")
+    print("\n   Values:")
     for j in range(J - 1):
-        print(f"   Alternative {j+1}: {model.coef_[j]}")
+        print(f"   Alternative {j + 1}: {model.coef_[j]}")
 
     # Compare to true parameters
     print("\n4. Comparison to true parameters:")
@@ -48,13 +49,21 @@ def main():
     print("\n   Coefficients with Standard Errors:")
     print("-" * 70)
     for j in range(J - 1):
-        print(f"   Alternative {j+1}:")
+        print(f"   Alternative {j + 1}:")
         for k in range(K):
             coef = model.coef_[j, k]
             se = std_errs[j, k]
             t_stat = coef / se
-            sig = "***" if abs(t_stat) > 2.576 else ("**" if abs(t_stat) > 1.96 else ("*" if abs(t_stat) > 1.645 else ""))
-            print(f"      Covariate {k}: {coef:7.4f} (SE: {se:6.4f}, t: {t_stat:6.2f}) {sig}")
+            sig = (
+                "***"
+                if abs(t_stat) > 2.576
+                else (
+                    "**" if abs(t_stat) > 1.96 else ("*" if abs(t_stat) > 1.645 else "")
+                )
+            )
+            print(
+                f"      Covariate {k}: {coef:7.4f} (SE: {se:6.4f}, t: {t_stat:6.2f}) {sig}"
+            )
 
     print("\n" + "=" * 70)
     print("Example completed! ✓")

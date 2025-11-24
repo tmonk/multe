@@ -8,7 +8,7 @@ either single alternatives or unordered pairs of alternatives.
 from .model import MultichoiceLogit
 from .simulate import simulate_data
 
-__version__ = "0.1.0"
+
 
 __all__ = [
     "MultichoiceLogit",
