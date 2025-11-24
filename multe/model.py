@@ -10,6 +10,10 @@ import numpy.typing as npt
 from scipy.optimize import minimize, OptimizeResult
 from scipy.special import logsumexp
 
+# Numerical constants for stability and accuracy
+CLIP_THRESHOLD = 1e-10  # Minimum probability value (avoid log(0))
+HESSIAN_EPSILON = 1e-5  # Step size for Hessian finite differences
+
 
 class MultichoiceLogit:
     """
@@ -278,7 +282,7 @@ class MultichoiceLogit:
             probs = p1 + p2 - p3
 
             # Safety clipping for numerical stability
-            probs = np.maximum(probs, 1e-10)
+            probs = np.maximum(probs, CLIP_THRESHOLD)
 
             # Sum log probabilities
             log_lik += np.sum(np.log(probs))
@@ -348,9 +352,14 @@ class MultichoiceLogit:
             D2 = a_t + R
             D3 = a_s + a_t + R
 
-            # Probability
-            P = (a_s/D1) + (a_t/D2) - ((a_s+a_t)/D3)
-            P = np.maximum(P, 1e-10)  # Safety
+            # Probability (unclipped for gradient computation)
+            P_raw = (a_s/D1) + (a_t/D2) - ((a_s+a_t)/D3)
+
+            # Clip for numerical stability (use module constant)
+            P = np.maximum(P_raw, CLIP_THRESHOLD)  # Clipped for likelihood
+
+            # Mask for where clipping occurred (gradient should be 0)
+            clipped_mask = P_raw >= CLIP_THRESHOLD
 
             # Precompute derivatives
             dP_dVs = a_s * R * (1/(D1**2) - 1/(D3**2))  # Shape: (n_dual,)
@@ -358,12 +367,12 @@ class MultichoiceLogit:
             common_r = (a_s+a_t)/(D3**2) - a_s/(D1**2) - a_t/(D2**2)  # Shape: (n_dual,)
 
             # Compute gradient contributions for s and t
-            # For alternative s
-            grad_weight_s = (1/P) * dP_dVs  # Shape: (n_dual,)
+            # For alternative s (gradient = 0 if probability was clipped)
+            grad_weight_s = np.where(clipped_mask, (1/P_raw) * dP_dVs, 0.0)  # Shape: (n_dual,)
             grad_contrib_s = grad_weight_s[:, np.newaxis] * X_i  # Shape: (n_dual, K)
 
-            # For alternative t
-            grad_weight_t = (1/P) * dP_dVt  # Shape: (n_dual,)
+            # For alternative t (gradient = 0 if probability was clipped)
+            grad_weight_t = np.where(clipped_mask, (1/P_raw) * dP_dVt, 0.0)  # Shape: (n_dual,)
             grad_contrib_t = grad_weight_t[:, np.newaxis] * X_i  # Shape: (n_dual, K)
 
             # Accumulate gradient for s alternatives
@@ -379,7 +388,8 @@ class MultichoiceLogit:
             # For alternatives that are neither s nor t (the 'r' alternatives)
             # Create mask for each alternative
             a_i = a[i_idx]  # Shape: (n_dual, J)
-            grad_weight_r = (1/P) * common_r  # Shape: (n_dual,)
+            # Gradient = 0 if probability was clipped
+            grad_weight_r = np.where(clipped_mask, (1/P_raw) * common_r, 0.0)  # Shape: (n_dual,)
 
             for j in range(self.J):
                 # Mask where j is neither s nor t
@@ -402,7 +412,9 @@ class MultichoiceLogit:
     ) -> npt.NDArray[np.float64]:
         """
         Computes standard errors by approximating the Hessian of the negative log-likelihood
-        using finite differences of the analytical gradient.
+        using central finite differences of the analytical gradient.
+
+        Uses central differences for O(ε²) accuracy vs O(ε) for forward differences.
 
         Args:
             flat_beta (np.ndarray): Optimal parameters (flattened).
@@ -416,19 +428,22 @@ class MultichoiceLogit:
             RuntimeWarning: If Hessian is singular or ill-conditioned.
         """
         self._validate_data(X, y_single, y_dual)
-        epsilon = 1e-5
         n_params = len(flat_beta)
         hessian = np.zeros((n_params, n_params))
 
-        # Calculate gradient at the optimum
-        grad_opt = self.gradient(flat_beta, X, y_single, y_dual)
-
-        # Finite difference to get second derivatives (Hessian columns)
+        # Central finite differences for Hessian (more accurate than forward)
         for j in range(n_params):
-            beta_perturb = flat_beta.copy()
-            beta_perturb[j] += epsilon
-            grad_perturb = self.gradient(beta_perturb, X, y_single, y_dual)
-            hessian[:, j] = (grad_perturb - grad_opt) / epsilon
+            beta_plus = flat_beta.copy()
+            beta_plus[j] += HESSIAN_EPSILON
+
+            beta_minus = flat_beta.copy()
+            beta_minus[j] -= HESSIAN_EPSILON
+
+            grad_plus = self.gradient(beta_plus, X, y_single, y_dual)
+            grad_minus = self.gradient(beta_minus, X, y_single, y_dual)
+
+            # Central difference: O(ε²) accuracy
+            hessian[:, j] = (grad_plus - grad_minus) / (2 * HESSIAN_EPSILON)
 
         # Variance-Covariance Matrix is inverse of Hessian
         try:

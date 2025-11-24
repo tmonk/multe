@@ -252,6 +252,40 @@ class TestGradient:
         # Should be close (within 1e-4)
         assert np.allclose(analytical_grad, numerical_grad, atol=1e-4)
 
+    def test_gradient_with_clipped_probabilities(self):
+        """Test that gradient correctly handles probability clipping."""
+        N, J, K = 30, 3, 2
+        model = MultichoiceLogit(J, K)
+
+        # Create data with some dual choices
+        X, y_single, y_dual, _ = simulate_data(N, J, K, mix_ratio=0.3, seed=42)
+
+        # Use extreme parameters that might cause very low probabilities
+        extreme_beta = np.array([[-5.0, -5.0], [10.0, 10.0]])
+        flat_beta = extreme_beta.flatten()
+
+        # Gradient should be finite even with clipped probabilities
+        grad = model.gradient(flat_beta, X, y_single, y_dual)
+
+        assert np.all(np.isfinite(grad))
+
+        # Verify gradient still matches numerical gradient
+        epsilon = 1e-5
+        numerical_grad = np.zeros_like(flat_beta)
+        for i in range(len(flat_beta)):
+            beta_plus = flat_beta.copy()
+            beta_plus[i] += epsilon
+            beta_minus = flat_beta.copy()
+            beta_minus[i] -= epsilon
+
+            nll_plus = model.neg_log_likelihood(beta_plus, X, y_single, y_dual)
+            nll_minus = model.neg_log_likelihood(beta_minus, X, y_single, y_dual)
+
+            numerical_grad[i] = (nll_plus - nll_minus) / (2 * epsilon)
+
+        # Should still be close even with clipped probabilities
+        assert np.allclose(grad, numerical_grad, atol=1e-4)
+
 
 class TestComputeStandardErrors:
     """Test standard error computation."""
