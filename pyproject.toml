@@ -1,6 +1,7 @@
 [project]
 name = "multe"
-description = "Multichoice Logit Estimation: A library for discrete choice models with single and paired alternatives"
+dynamic = ["version"]
+description = "A fast, Python implementation of an MLE estimator of the multichoice logit model."
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
