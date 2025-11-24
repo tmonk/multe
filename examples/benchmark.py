@@ -4,9 +4,11 @@ Benchmark script for Multichoice Logit estimation
 Tests speed and accuracy across different problem sizes and optimization methods.
 """
 
-import numpy as np
 import time
+
+import numpy as np
 from scipy.optimize import minimize
+
 from multe import MultichoiceLogit, simulate_data
 
 

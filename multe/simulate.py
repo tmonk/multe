@@ -17,7 +17,7 @@ def simulate_data(
     N: int,
     J: int,
     K: int,
-    true_beta: Optional[npt.NDArray[np.float64]] = None,
+    true_beta: npt.NDArray[np.float64] | None = None,
     mix_ratio: float = 0.5,
     seed: int | None = 42,
     rng: np.random.Generator | None = None,

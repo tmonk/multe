@@ -1,13 +1,13 @@
 # Multe: Multichoice Logit Estimation
 
-[![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Tests](https://github.com/tmonk/multe/actions/workflows/tests.yml/badge.svg)](https://github.com/tmonk/multe/actions/workflows/tests.yml)
 [![PyPI version](https://img.shields.io/pypi/v/multe)](https://pypi.org/project/multe/)
 
 A Python library for estimating discrete choice models where agents can select either single alternatives or unordered pairs of alternatives.
 
-This implements the model as described in Ophem, H.V., Stam, P. and Praag, B.V., 1999. [Multichoice Logit: Modeling Incomplete Preference Rankings of Classical Concerts](https://www.tandfonline.com/doi/abs/10.1198/07350019919290156). Journal of Business & Economic Statistics, 17(1), pp.117-128.
+This implements the model as described in Ophem, H.V., Stam, P. and Praag, B.V., 1999. [Multichoice Logit: Modeling Incomplete Preference Rankings of Classical Concerts](https://www.tandfonline.com/doi/abs/10.1080/07350015.1999.10524801). Journal of Business & Economic Statistics, 17(1), pp.117-128.
 
 Built by [Thomas Monk](https://tdmonk.com), London School of Economics.
 

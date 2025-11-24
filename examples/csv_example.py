@@ -11,6 +11,7 @@ This example demonstrates:
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
+
 from multe import MultichoiceLogit, simulate_data
 
 

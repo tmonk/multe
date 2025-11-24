@@ -5,6 +5,7 @@ This example demonstrates the convenient fit() method for quick model estimation
 """
 
 import numpy as np
+
 from multe import MultichoiceLogit, simulate_data
 
 

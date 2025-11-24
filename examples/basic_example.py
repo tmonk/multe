@@ -9,8 +9,8 @@ This example demonstrates:
 """
 
 import numpy as np
-from scipy.optimize import minimize
 from scipy import stats
+from scipy.optimize import minimize
 
 from multe import MultichoiceLogit, simulate_data
 

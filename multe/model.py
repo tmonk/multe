@@ -522,6 +522,21 @@ class MultichoiceLogit:
         # Return negative gradient for minimization, remove fixed class 0
         return -grad[1:].flatten()
 
+    def gradient(
+        self,
+        flat_beta: npt.NDArray[np.float64],
+        X: npt.NDArray[np.float64],
+        y_single: npt.NDArray[np.int8],
+        y_dual: npt.NDArray[np.int8],
+    ) -> npt.NDArray[np.float64]:
+        """
+        Computes the analytical gradient (Jacobian).
+        Wrapper for public API compliance that computes indices on the fly.
+        """
+        self._validate_data(X, y_single, y_dual)
+        single_indices, dual_indices = self._prepare_data(y_single, y_dual)
+        return self._gradient_fast(flat_beta, X, single_indices, dual_indices)
+
     def compute_standard_errors(
         self,
         X: npt.NDArray[np.float64],

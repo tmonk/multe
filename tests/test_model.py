@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+
 from multe import MultichoiceLogit, simulate_data
 
 
