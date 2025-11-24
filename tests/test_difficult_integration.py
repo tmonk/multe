@@ -110,15 +110,10 @@ class TestDifficultIntegration:
         X, y_single, y_dual, _ = simulate_data(N, J, K, seed=42)
         
         model = MultichoiceLogit(J, K)
-        # Limit iterations to keep execution time reasonable (~10-30s instead of minutes)
-        options = {"maxiter": 5} 
-        try:
-            model.fit(X, y_single, y_dual, options=options)
-        except RuntimeError as e:
-            assert "Optimization failed to converge" in str(e)
-            return
+        model.fit(X, y_single, y_dual)
         
         assert model.coef_ is not None
+        assert model.optimization_result_.success
 
     @pytest.mark.slow
     def test_massive_scale_synthetic(self):
@@ -133,14 +128,10 @@ class TestDifficultIntegration:
         X, y_single, y_dual, _ = simulate_data(N, J, K, seed=42)
         
         model = MultichoiceLogit(J, K)
-        options = {"maxiter": 5} 
-        try:
-            model.fit(X, y_single, y_dual, options=options)
-        except RuntimeError as e:
-            assert "Optimization failed to converge" in str(e)
-            return
+        model.fit(X, y_single, y_dual)
         
         assert model.coef_ is not None
+        assert model.optimization_result_.success
 
     def test_all_dual_choices(self):
         """
