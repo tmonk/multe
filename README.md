@@ -2,7 +2,7 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Tests](https://github.com/tmonk/multe/actions/workflows/tests.yml/badge.svg)](https://github.com/tmonk/multe/actions/workflows/tests.yml)
 
 A Python library for estimating discrete choice models where agents can select either single alternatives or unordered pairs of alternatives.
 
