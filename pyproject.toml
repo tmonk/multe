@@ -1,6 +1,6 @@
 [project]
 name = "multe"
-version = "0.1.0"
+version = "1"
 description = "Multichoice Logit Estimation: A library for discrete choice models with single and paired alternatives"
 readme = "README.md"
 requires-python = ">=3.9"
