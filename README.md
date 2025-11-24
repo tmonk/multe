@@ -7,7 +7,7 @@
 
 A Python library for estimating discrete choice models where agents can select either single alternatives or unordered pairs of alternatives.
 
-This implements the model as described in Ophem, H.V., Stam, P. and Praag, B.V., 1999. [Multichoice Logit: Modeling Incomplete Preference Rankings of Classical Concerts](https://www.tandfonline.com/doi/abs/10.1198/07350019919290156). Journal of Business & Economic Statistics, 17(1), pp.117-128.
+This implements the model as described in Ophem, H.V., Stam, P. and Praag, B.V., 1999. [Multichoice Logit: Modeling Incomplete Preference Rankings of Classical Concerts](https://www.tandfonline.com/doi/abs/10.1080/07350015.1999.10524801). Journal of Business & Economic Statistics, 17(1), pp.117-128.
 
 ## Installation
 
