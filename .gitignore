@@ -1,0 +1,20 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.DS_Store
+
+# Virtual environments
+.venv
+
+# Testing
+benchmarking/
+.pytest_cache/
+htmlcov/
+.coverage
+*.coverage
+documentation/multichoice.tex
+.github/workflows/tests_full.yml
