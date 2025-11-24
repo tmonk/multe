@@ -8,6 +8,7 @@ from typing import Tuple, Optional, Dict, Any
 import numpy as np
 import numpy.typing as npt
 from scipy.optimize import minimize, OptimizeResult
+from scipy.special import logsumexp
 
 
 class MultichoiceLogit:
@@ -247,7 +248,8 @@ class MultichoiceLogit:
             V_sub = V[single_choice_mask]
             y_sub = y_single[single_choice_mask]
             term1 = np.sum(y_sub * V_sub)
-            term2 = np.sum(np.log(np.sum(np.exp(V_sub), axis=1)))
+            # Use logsumexp for numerical stability (avoids overflow in exp)
+            term2 = np.sum(logsumexp(V_sub, axis=1))
             log_lik += (term1 - term2)
 
         # 2. Handle Dual Choices

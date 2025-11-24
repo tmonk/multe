@@ -184,6 +184,33 @@ class TestNegLogLikelihood:
         assert nll > 0
         assert np.sum(y_single) == 0  # Verify no single choices
 
+    def test_numerical_stability_large_utilities(self):
+        """Test that large utilities don't cause overflow (numerical stability)."""
+        N, J, K = 50, 3, 2
+        model = MultichoiceLogit(J, K)
+
+        # Create data with very large utilities that would overflow with naive exp
+        X = np.random.randn(N, K)
+        # Use large beta values
+        large_beta = np.array([[100.0, 100.0], [50.0, 50.0]])
+
+        # Create valid single choices
+        y_single = np.zeros((N, J), dtype=np.int8)
+        y_single[:, 0] = 1  # All choose first alternative
+        y_dual = np.zeros((N, J, J), dtype=np.int8)
+
+        flat_beta = large_beta.flatten()
+
+        # Should not overflow or produce inf/nan
+        nll = model.neg_log_likelihood(flat_beta, X, y_single, y_dual)
+
+        assert np.isfinite(nll)
+        assert nll > 0
+
+        # Gradient should also be stable
+        grad = model.gradient(flat_beta, X, y_single, y_dual)
+        assert np.all(np.isfinite(grad))
+
 
 class TestGradient:
     """Test gradient computation."""
