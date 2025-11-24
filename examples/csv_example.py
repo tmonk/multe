@@ -11,6 +11,7 @@ This example demonstrates:
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
+
 from multe import MultichoiceLogit, simulate_data
 
 
@@ -25,8 +26,6 @@ def save_data_to_csv(X, y_single, y_dual, filepath_prefix="data"):
         filepath_prefix: Prefix for output files
     """
     N, K = X.shape
-    J = y_single.shape[1]
-
     # Save covariates
     covariate_df = pd.DataFrame(X, columns=[f"x_{k}" for k in range(K)])
     covariate_df.to_csv(f"{filepath_prefix}_covariates.csv", index=False)
@@ -62,7 +61,9 @@ def save_data_to_csv(X, y_single, y_dual, filepath_prefix="data"):
     choices_df = pd.DataFrame(choices_list)
     choices_df.to_csv(f"{filepath_prefix}_choices.csv", index=False)
 
-    print(f"Data saved to {filepath_prefix}_covariates.csv and {filepath_prefix}_choices.csv")
+    print(
+        f"Data saved to {filepath_prefix}_covariates.csv and {filepath_prefix}_choices.csv"
+    )
 
 
 def load_data_from_csv(filepath_prefix="data", J=None):
@@ -165,12 +166,12 @@ def main():
     print("\nTrue vs Estimated Parameters:")
     print("-" * 60)
     for j in range(J - 1):
-        print(f"Alternative {j+1}:")
+        print(f"Alternative {j + 1}:")
         for k in range(K):
             print(
-                f"  Covariate {k}: True={true_beta[j,k]:7.4f}, "
-                f"Est={est_beta[j,k]:7.4f}, "
-                f"Error={abs(true_beta[j,k] - est_beta[j,k]):7.4f}"
+                f"  Covariate {k}: True={true_beta[j, k]:7.4f}, "
+                f"Est={est_beta[j, k]:7.4f}, "
+                f"Error={abs(true_beta[j, k] - est_beta[j, k]):7.4f}"
             )
     print("-" * 60)
     print(f"Mean Absolute Error: {mae:.4f}")
@@ -185,12 +186,12 @@ def main():
     print("\nParameter Estimates with Standard Errors:")
     print("-" * 60)
     for j in range(J - 1):
-        print(f"Alternative {j+1}:")
+        print(f"Alternative {j + 1}:")
         for k in range(K):
             t_stat = est_beta[j, k] / std_errs_reshaped[j, k]
             print(
-                f"  Covariate {k}: {est_beta[j,k]:7.4f} "
-                f"(SE: {std_errs_reshaped[j,k]:6.4f}, "
+                f"  Covariate {k}: {est_beta[j, k]:7.4f} "
+                f"(SE: {std_errs_reshaped[j, k]:6.4f}, "
                 f"t: {t_stat:6.2f})"
             )
 
@@ -205,7 +206,7 @@ def main():
         os.remove("example_data_covariates.csv")
         os.remove("example_data_choices.csv")
         print("\nTemporary CSV files cleaned up.")
-    except:
+    except OSError:
         pass
 
 
