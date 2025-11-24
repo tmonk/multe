@@ -108,3 +108,7 @@ Model class with methods:
 Generate synthetic data following the RUM framework.
 
 Returns: `X, y_single, y_dual, true_beta`
+
+# Acknowledgements
+
+Many thanks to [Alan Manning](https://www.alan-manning.com/) for his guidance and support with this project.
