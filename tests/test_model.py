@@ -184,6 +184,33 @@ class TestNegLogLikelihood:
         assert nll > 0
         assert np.sum(y_single) == 0  # Verify no single choices
 
+    def test_numerical_stability_large_utilities(self):
+        """Test that large utilities don't cause overflow (numerical stability)."""
+        N, J, K = 50, 3, 2
+        model = MultichoiceLogit(J, K)
+
+        # Create data with very large utilities that would overflow with naive exp
+        X = np.random.randn(N, K)
+        # Use large beta values
+        large_beta = np.array([[100.0, 100.0], [50.0, 50.0]])
+
+        # Create valid single choices
+        y_single = np.zeros((N, J), dtype=np.int8)
+        y_single[:, 0] = 1  # All choose first alternative
+        y_dual = np.zeros((N, J, J), dtype=np.int8)
+
+        flat_beta = large_beta.flatten()
+
+        # Should not overflow or produce inf/nan
+        nll = model.neg_log_likelihood(flat_beta, X, y_single, y_dual)
+
+        assert np.isfinite(nll)
+        assert nll > 0
+
+        # Gradient should also be stable
+        grad = model.gradient(flat_beta, X, y_single, y_dual)
+        assert np.all(np.isfinite(grad))
+
 
 class TestGradient:
     """Test gradient computation."""
@@ -225,6 +252,40 @@ class TestGradient:
         # Should be close (within 1e-4)
         assert np.allclose(analytical_grad, numerical_grad, atol=1e-4)
 
+    def test_gradient_with_clipped_probabilities(self):
+        """Test that gradient correctly handles probability clipping."""
+        N, J, K = 30, 3, 2
+        model = MultichoiceLogit(J, K)
+
+        # Create data with some dual choices
+        X, y_single, y_dual, _ = simulate_data(N, J, K, mix_ratio=0.3, seed=42)
+
+        # Use extreme parameters that might cause very low probabilities
+        extreme_beta = np.array([[-5.0, -5.0], [10.0, 10.0]])
+        flat_beta = extreme_beta.flatten()
+
+        # Gradient should be finite even with clipped probabilities
+        grad = model.gradient(flat_beta, X, y_single, y_dual)
+
+        assert np.all(np.isfinite(grad))
+
+        # Verify gradient still matches numerical gradient
+        epsilon = 1e-5
+        numerical_grad = np.zeros_like(flat_beta)
+        for i in range(len(flat_beta)):
+            beta_plus = flat_beta.copy()
+            beta_plus[i] += epsilon
+            beta_minus = flat_beta.copy()
+            beta_minus[i] -= epsilon
+
+            nll_plus = model.neg_log_likelihood(beta_plus, X, y_single, y_dual)
+            nll_minus = model.neg_log_likelihood(beta_minus, X, y_single, y_dual)
+
+            numerical_grad[i] = (nll_plus - nll_minus) / (2 * epsilon)
+
+        # Should still be close even with clipped probabilities
+        assert np.allclose(grad, numerical_grad, atol=1e-4)
+
 
 class TestComputeStandardErrors:
     """Test standard error computation."""
@@ -264,6 +325,119 @@ class TestComputeStandardErrors:
         # Should produce RuntimeWarning in some cases (not always)
         std_errs = model.compute_standard_errors(flat_beta, X, y_single, y_dual)
         assert std_errs.shape == ((J - 1) * K,)
+
+
+class TestFitMethod:
+    """Test the fit() convenience method."""
+
+    def test_fit_basic(self):
+        """Test that fit() works and sets attributes correctly."""
+        N, J, K = 500, 3, 2
+        X, y_single, y_dual, true_beta = simulate_data(N, J, K, seed=42)
+        model = MultichoiceLogit(J, K)
+
+        # Initially, coef_ should be None
+        assert model.coef_ is None
+        assert model.optimization_result_ is None
+
+        # Fit the model
+        result = model.fit(X, y_single, y_dual)
+
+        # Should return self
+        assert result is model
+
+        # Attributes should be set
+        assert model.coef_ is not None
+        assert model.optimization_result_ is not None
+        assert model.coef_.shape == (J - 1, K)
+
+    def test_fit_recovers_parameters(self):
+        """Test that fit() recovers parameters reasonably well."""
+        N, J, K = 1000, 3, 2
+        X, y_single, y_dual, true_beta = simulate_data(N, J, K, seed=42)
+        model = MultichoiceLogit(J, K)
+
+        model.fit(X, y_single, y_dual)
+
+        # Mean absolute error should be reasonably small
+        mae = np.mean(np.abs(model.coef_ - true_beta))
+        assert mae < 0.15
+
+    def test_fit_with_custom_init(self):
+        """Test fit() with custom initial parameters."""
+        N, J, K = 200, 3, 2
+        X, y_single, y_dual, true_beta = simulate_data(N, J, K, seed=42)
+        model = MultichoiceLogit(J, K)
+
+        # Custom initial values
+        init_beta = np.random.randn((J - 1) * K) * 0.1
+
+        model.fit(X, y_single, y_dual, init_beta=init_beta)
+
+        assert model.coef_ is not None
+        assert model.coef_.shape == (J - 1, K)
+
+    def test_fit_with_invalid_init_shape(self):
+        """Test that invalid init_beta shape raises ValueError."""
+        N, J, K = 100, 3, 2
+        X, y_single, y_dual, _ = simulate_data(N, J, K, seed=42)
+        model = MultichoiceLogit(J, K)
+
+        init_beta_wrong = np.random.randn(10)  # Wrong size
+
+        with pytest.raises(ValueError, match="init_beta must have size"):
+            model.fit(X, y_single, y_dual, init_beta=init_beta_wrong)
+
+    def test_fit_with_different_methods(self):
+        """Test fit() with different optimization methods."""
+        N, J, K = 200, 3, 2
+        X, y_single, y_dual, _ = simulate_data(N, J, K, seed=42)
+
+        for method in ["BFGS", "L-BFGS-B"]:
+            model = MultichoiceLogit(J, K)
+            model.fit(X, y_single, y_dual, method=method)
+
+            assert model.coef_ is not None
+            assert model.optimization_result_.success
+
+    def test_fit_with_custom_options(self):
+        """Test fit() with custom optimizer options."""
+        N, J, K = 200, 3, 2
+        X, y_single, y_dual, _ = simulate_data(N, J, K, seed=42)
+        model = MultichoiceLogit(J, K)
+
+        custom_options = {"gtol": 1e-4, "maxiter": 500}
+        model.fit(X, y_single, y_dual, options=custom_options)
+
+        assert model.coef_ is not None
+        assert model.optimization_result_ is not None
+
+    def test_fit_method_chaining(self):
+        """Test that fit() supports method chaining."""
+        N, J, K = 200, 3, 2
+        X, y_single, y_dual, _ = simulate_data(N, J, K, seed=42)
+
+        model = MultichoiceLogit(J, K).fit(X, y_single, y_dual)
+
+        assert model.coef_ is not None
+        assert model.coef_.shape == (J - 1, K)
+
+    def test_fit_optimization_result_attributes(self):
+        """Test that optimization_result_ contains expected attributes."""
+        N, J, K = 200, 3, 2
+        X, y_single, y_dual, _ = simulate_data(N, J, K, seed=42)
+        model = MultichoiceLogit(J, K)
+
+        model.fit(X, y_single, y_dual)
+
+        result = model.optimization_result_
+
+        # Check expected attributes
+        assert hasattr(result, "success")
+        assert hasattr(result, "fun")  # Final negative log-likelihood
+        assert hasattr(result, "nit")  # Number of iterations
+        assert hasattr(result, "nfev")  # Number of function evaluations
+        assert result.success is True
 
 
 class TestEndToEndEstimation:

@@ -4,9 +4,15 @@ Multichoice Logit Model
 Vectorized implementation for fast and accurate MLE estimation.
 """
 
-from typing import Tuple
+from typing import Tuple, Optional, Dict, Any
 import numpy as np
 import numpy.typing as npt
+from scipy.optimize import minimize, OptimizeResult
+from scipy.special import logsumexp
+
+# Numerical constants for stability and accuracy
+CLIP_THRESHOLD = 1e-10  # Minimum probability value (avoid log(0))
+HESSIAN_EPSILON = 1e-5  # Step size for Hessian finite differences
 
 
 class MultichoiceLogit:
@@ -16,6 +22,8 @@ class MultichoiceLogit:
     Attributes:
         J (int): Total number of alternatives available.
         K (int): Number of covariates (features) for each alternative.
+        coef_ (np.ndarray): Fitted coefficients of shape (J-1, K). Available after fit().
+        optimization_result_ (OptimizeResult): Full optimization result. Available after fit().
     """
 
     def __init__(self, num_alternatives: int, num_covariates: int) -> None:
@@ -36,6 +44,10 @@ class MultichoiceLogit:
 
         self.J = num_alternatives
         self.K = num_covariates
+
+        # Fitted attributes (set by fit method)
+        self.coef_: Optional[npt.NDArray[np.float64]] = None
+        self.optimization_result_: Optional[OptimizeResult] = None
 
     def transform_params(self, flat_beta: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         """
@@ -82,6 +94,85 @@ class MultichoiceLogit:
         V_stable = V - np.max(V, axis=1, keepdims=True)
         a = np.exp(V_stable)
         return V, a
+
+    def fit(
+        self,
+        X: npt.NDArray[np.float64],
+        y_single: npt.NDArray[np.int8],
+        y_dual: npt.NDArray[np.int8],
+        init_beta: Optional[npt.NDArray[np.float64]] = None,
+        method: str = "L-BFGS-B",
+        options: Optional[Dict[str, Any]] = None,
+    ) -> "MultichoiceLogit":
+        """
+        Fit the multichoice logit model using maximum likelihood estimation.
+
+        This is a convenience method that wraps scipy.optimize.minimize with sensible
+        defaults. For more control over optimization, you can call neg_log_likelihood
+        and gradient directly with your own optimizer.
+
+        Args:
+            X (np.ndarray): Covariate matrix of shape (N, K).
+            y_single (np.ndarray): Binary matrix (N, J). y_single[i, j] = 1 if i chose j alone.
+            y_dual (np.ndarray): Binary tensor (N, J, J). y_dual[i, s, t] = 1 if i chose pair {s, t}.
+            init_beta (np.ndarray, optional): Initial parameter values (flat array of size (J-1)*K).
+                                              If None, initializes to zeros.
+            method (str): Optimization method for scipy.optimize.minimize. Default is 'L-BFGS-B'.
+                         Other good options: 'BFGS', 'Newton-CG'.
+            options (dict, optional): Additional options to pass to the optimizer.
+                                     Default is {'gtol': 1e-5, 'maxiter': 1000}.
+
+        Returns:
+            self: Returns the instance itself for method chaining.
+
+        Raises:
+            ValueError: If data dimensions are incompatible or constraints are violated.
+            RuntimeError: If optimization fails to converge.
+
+        Example:
+            >>> from multe import MultichoiceLogit, simulate_data
+            >>> X, y_single, y_dual, true_beta = simulate_data(N=1000, J=3, K=2)
+            >>> model = MultichoiceLogit(num_alternatives=3, num_covariates=2)
+            >>> model.fit(X, y_single, y_dual)
+            >>> print(model.coef_)  # Estimated coefficients
+        """
+        # Set default options
+        if options is None:
+            options = {"gtol": 1e-5, "maxiter": 1000}
+
+        # Initialize parameters
+        if init_beta is None:
+            init_beta = np.zeros((self.J - 1) * self.K)
+        else:
+            # Validate initial parameters
+            expected_size = (self.J - 1) * self.K
+            if init_beta.size != expected_size:
+                raise ValueError(
+                    f"init_beta must have size {expected_size}, got {init_beta.size}"
+                )
+
+        # Run optimization
+        result = minimize(
+            fun=self.neg_log_likelihood,
+            jac=self.gradient,
+            x0=init_beta,
+            args=(X, y_single, y_dual),
+            method=method,
+            options=options,
+        )
+
+        # Check convergence
+        if not result.success:
+            raise RuntimeError(
+                f"Optimization failed to converge: {result.message}\n"
+                f"Try a different optimization method or adjust tolerance."
+            )
+
+        # Store results
+        self.coef_ = result.x.reshape(self.J - 1, self.K)
+        self.optimization_result_ = result
+
+        return self
 
     def _validate_data(
         self,
@@ -161,7 +252,8 @@ class MultichoiceLogit:
             V_sub = V[single_choice_mask]
             y_sub = y_single[single_choice_mask]
             term1 = np.sum(y_sub * V_sub)
-            term2 = np.sum(np.log(np.sum(np.exp(V_sub), axis=1)))
+            # Use logsumexp for numerical stability (avoids overflow in exp)
+            term2 = np.sum(logsumexp(V_sub, axis=1))
             log_lik += (term1 - term2)
 
         # 2. Handle Dual Choices
@@ -190,7 +282,7 @@ class MultichoiceLogit:
             probs = p1 + p2 - p3
 
             # Safety clipping for numerical stability
-            probs = np.maximum(probs, 1e-10)
+            probs = np.maximum(probs, CLIP_THRESHOLD)
 
             # Sum log probabilities
             log_lik += np.sum(np.log(probs))
@@ -226,7 +318,7 @@ class MultichoiceLogit:
         # Gradient buffer for all parameters (J, K)
         grad = np.zeros((self.J, self.K))
 
-        # 1. Single Choice Gradient (Standard MNL) - already vectorized
+        # 1. Single Choice Gradient (Standard MNL)
         single_mask = y_single.sum(axis=1) > 0
         if np.any(single_mask):
             X_sub = X[single_mask]
@@ -260,9 +352,14 @@ class MultichoiceLogit:
             D2 = a_t + R
             D3 = a_s + a_t + R
 
-            # Probability
-            P = (a_s/D1) + (a_t/D2) - ((a_s+a_t)/D3)
-            P = np.maximum(P, 1e-10)  # Safety
+            # Probability (unclipped for gradient computation)
+            P_raw = (a_s/D1) + (a_t/D2) - ((a_s+a_t)/D3)
+
+            # Clip for numerical stability (use module constant)
+            P = np.maximum(P_raw, CLIP_THRESHOLD)  # Clipped for likelihood
+
+            # Mask for where clipping occurred (gradient should be 0)
+            clipped_mask = P_raw >= CLIP_THRESHOLD
 
             # Precompute derivatives
             dP_dVs = a_s * R * (1/(D1**2) - 1/(D3**2))  # Shape: (n_dual,)
@@ -270,37 +367,50 @@ class MultichoiceLogit:
             common_r = (a_s+a_t)/(D3**2) - a_s/(D1**2) - a_t/(D2**2)  # Shape: (n_dual,)
 
             # Compute gradient contributions for s and t
-            # For alternative s
-            grad_weight_s = (1/P) * dP_dVs  # Shape: (n_dual,)
+            # For alternative s (gradient = 0 if probability was clipped)
+            grad_weight_s = np.where(clipped_mask, (1/P_raw) * dP_dVs, 0.0)  # Shape: (n_dual,)
             grad_contrib_s = grad_weight_s[:, np.newaxis] * X_i  # Shape: (n_dual, K)
 
-            # For alternative t
-            grad_weight_t = (1/P) * dP_dVt  # Shape: (n_dual,)
+            # For alternative t (gradient = 0 if probability was clipped)
+            grad_weight_t = np.where(clipped_mask, (1/P_raw) * dP_dVt, 0.0)  # Shape: (n_dual,)
             grad_contrib_t = grad_weight_t[:, np.newaxis] * X_i  # Shape: (n_dual, K)
 
-            # Accumulate gradient for s alternatives
-            for j in range(self.J):
-                mask_s = (s_idx == j)
-                if np.any(mask_s):
-                    grad[j] += np.sum(grad_contrib_s[mask_s], axis=0)
-
-                mask_t = (t_idx == j)
-                if np.any(mask_t):
-                    grad[j] += np.sum(grad_contrib_t[mask_t], axis=0)
+            # Complexity: O(n_dual) - faster than O(J * n_dual) with loops
+            np.add.at(grad, s_idx, grad_contrib_s)
+            np.add.at(grad, t_idx, grad_contrib_t)
 
             # For alternatives that are neither s nor t (the 'r' alternatives)
-            # Create mask for each alternative
+            # Memory: O(n_dual * J * K) tensor, but faster than looping
             a_i = a[i_idx]  # Shape: (n_dual, J)
-            grad_weight_r = (1/P) * common_r  # Shape: (n_dual,)
+            grad_weight_r = np.where(clipped_mask, (1/P_raw) * common_r, 0.0)  # Shape: (n_dual,)
 
-            for j in range(self.J):
-                # Mask where j is neither s nor t
-                mask_r = (s_idx != j) & (t_idx != j)
-                if np.any(mask_r):
-                    # Get a_j values where j is 'r'
-                    a_j = a_i[mask_r, j]  # Shape: (n_mask,)
-                    grad_contrib_r = (grad_weight_r[mask_r] * a_j)[:, np.newaxis] * X_i[mask_r]
-                    grad[j] += np.sum(grad_contrib_r, axis=0)
+            # Create mask: True where alternative is neither s nor t for each observation
+            # Shape: (n_dual, J) - True if alternative j is 'r' for observation i
+            is_r = np.ones((n_dual, self.J), dtype=bool)
+            is_r[np.arange(n_dual), s_idx] = False
+            is_r[np.arange(n_dual), t_idx] = False
+
+            # Gradient contributions for 'r' alternatives (neither s nor t)
+            # 
+            # For each dual choice observation i and each 'r' alternative j:
+            #   grad_contrib[j] += (1/P) * common_r * a[i,j] * X[i]
+            #
+            # We vectorize this as a 3D tensor multiplication:
+            #   grad_weight_r: (n_dual,)     -> (n_dual, 1, 1)  scalar weight per obs
+            #   a_i:           (n_dual, J)   -> (n_dual, J, 1)  utility weight per alt
+            #   X_i:           (n_dual, K)   -> (n_dual, 1, K)  covariates per obs
+            #   result:        (n_dual, J, K)                   gradient contrib per obs/alt
+            #
+            # Memory: O(n_dual * J * K) — for large datasets, consider chunked processing
+            grad_contrib_r_all = (grad_weight_r[:, np.newaxis, np.newaxis] * # Shape: (n_dual, 1, 1)
+                                  a_i[:, :, np.newaxis] * # Shape: (n_dual, J, 1)
+                                  X_i[:, np.newaxis, :])  # Shape: (n_dual, 1, K)
+
+            # Zero out contributions from s and t alternatives
+            grad_contrib_r_all[~is_r] = 0
+
+            # Sum over dual choices and add to gradient for each alternative
+            grad += grad_contrib_r_all.sum(axis=0)  # Sum over n_dual, result: (J, K)
 
         # Return negative gradient for minimization, remove fixed class 0
         return -grad[1:].flatten()
@@ -314,7 +424,9 @@ class MultichoiceLogit:
     ) -> npt.NDArray[np.float64]:
         """
         Computes standard errors by approximating the Hessian of the negative log-likelihood
-        using finite differences of the analytical gradient.
+        using central finite differences of the analytical gradient.
+
+        Uses central differences for O(ε²) accuracy vs O(ε) for forward differences.
 
         Args:
             flat_beta (np.ndarray): Optimal parameters (flattened).
@@ -328,19 +440,22 @@ class MultichoiceLogit:
             RuntimeWarning: If Hessian is singular or ill-conditioned.
         """
         self._validate_data(X, y_single, y_dual)
-        epsilon = 1e-5
         n_params = len(flat_beta)
         hessian = np.zeros((n_params, n_params))
 
-        # Calculate gradient at the optimum
-        grad_opt = self.gradient(flat_beta, X, y_single, y_dual)
-
-        # Finite difference to get second derivatives (Hessian columns)
+        # Central finite differences for Hessian (more accurate than forward)
         for j in range(n_params):
-            beta_perturb = flat_beta.copy()
-            beta_perturb[j] += epsilon
-            grad_perturb = self.gradient(beta_perturb, X, y_single, y_dual)
-            hessian[:, j] = (grad_perturb - grad_opt) / epsilon
+            beta_plus = flat_beta.copy()
+            beta_plus[j] += HESSIAN_EPSILON
+
+            beta_minus = flat_beta.copy()
+            beta_minus[j] -= HESSIAN_EPSILON
+
+            grad_plus = self.gradient(beta_plus, X, y_single, y_dual)
+            grad_minus = self.gradient(beta_minus, X, y_single, y_dual)
+
+            # Central difference: O(ε²) accuracy
+            hessian[:, j] = (grad_plus - grad_minus) / (2 * HESSIAN_EPSILON)
 
         # Variance-Covariance Matrix is inverse of Hessian
         try:

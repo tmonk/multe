@@ -37,7 +37,7 @@ def main():
         jac=model.gradient,
         x0=init_beta,
         args=(X, y_single, y_dual),
-        method='BFGS',
+        method='L-BFGS-B',
         options={'disp': True, 'gtol': 1e-5}
     )
 

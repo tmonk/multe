@@ -22,7 +22,23 @@ cd multe
 pip install -e .
 ```
 
-See `examples/basic_example.py` for a complete working example.
+## Quick Start
+
+```python
+from multe import MultichoiceLogit, simulate_data
+
+# Generate synthetic data
+X, y_single, y_dual, true_beta = simulate_data(N=1000, J=4, K=3, seed=42)
+
+# Fit model
+model = MultichoiceLogit(num_alternatives=4, num_covariates=3)
+model.fit(X, y_single, y_dual)
+
+# Access fitted coefficients
+print(model.coef_)  # Shape: (J-1, K) = (3, 3)
+```
+
+See `examples/simple_fit_example.py` for a complete example, or `examples/basic_example.py` for advanced usage.
 
 ## Model
 
@@ -76,10 +92,13 @@ Fully vectorized implementation for fast estimation and simulation:
 
 Run benchmarks: `python examples/benchmark.py`
 
-## Main Functions
+## API Reference
 
 ### MultichoiceLogit(num_alternatives, num_covariates)
 Model class with methods:
+- **`fit(X, y_single, y_dual, method='L-BFGS-B')`** - Fit model using MLE (recommended)
+  - Returns `self` with fitted `coef_` attribute
+  - Stores optimization details in `optimization_result_`
 - `neg_log_likelihood(flat_beta, X, y_single, y_dual)` - Negative log-likelihood
 - `gradient(flat_beta, X, y_single, y_dual)` - Analytical gradient
 - `compute_standard_errors(flat_beta, X, y_single, y_dual)` - Standard errors
