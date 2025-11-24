@@ -1,6 +1,6 @@
 [project]
 name = "multe"
-version = "2"
+version = "3"
 description = "Multichoice Logit Estimation: A library for discrete choice models with single and paired alternatives"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -19,6 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
     "numpy>=1.20.0",
@@ -30,6 +31,8 @@ dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pandas>=1.3.0",
+    "ruff>=0.3.0",
+    "mypy>=1.0.0",
 ]
 
 [project.urls]
@@ -51,3 +54,22 @@ exclude = [
     ".github/",
     "tests/",
 ]
+
+[tool.ruff]
+line-length = 88
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = []
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["scipy.*", "pandas.*"]
+ignore_missing_imports = true
