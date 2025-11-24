@@ -1,6 +1,5 @@
 [project]
 name = "multe"
-version = "3"
 description = "Multichoice Logit Estimation: A library for discrete choice models with single and paired alternatives"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -41,8 +40,11 @@ Repository = "https://github.com/tmonk/multe"
 Documentation = "https://github.com/tmonk/multe#readme"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatchling_vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["multe"]

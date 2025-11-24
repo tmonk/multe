@@ -9,7 +9,7 @@ jobs:
     name: Upload release to PyPI
     runs-on: ubuntu-latest
     environment:
-      name: pypi
+      name: multe
       url: https://pypi.org/p/multe
     permissions:
       id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
