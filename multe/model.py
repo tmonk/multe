@@ -120,7 +120,7 @@ class MultichoiceLogit:
             method (str): Optimization method for scipy.optimize.minimize. Default is 'L-BFGS-B'.
                          Other good options: 'BFGS', 'Newton-CG'.
             options (dict, optional): Additional options to pass to the optimizer.
-                                     Default is {'gtol': 1e-5, 'maxiter': 1000, 'disp': False}.
+                                     Default is {'gtol': 1e-5, 'maxiter': 1000}.
 
         Returns:
             self: Returns the instance itself for method chaining.
@@ -138,7 +138,7 @@ class MultichoiceLogit:
         """
         # Set default options
         if options is None:
-            options = {"gtol": 1e-5, "maxiter": 1000, "disp": False}
+            options = {"gtol": 1e-5, "maxiter": 1000}
 
         # Initialize parameters
         if init_beta is None:
@@ -318,7 +318,7 @@ class MultichoiceLogit:
         # Gradient buffer for all parameters (J, K)
         grad = np.zeros((self.J, self.K))
 
-        # 1. Single Choice Gradient (Standard MNL) - already vectorized
+        # 1. Single Choice Gradient (Standard MNL)
         single_mask = y_single.sum(axis=1) > 0
         if np.any(single_mask):
             X_sub = X[single_mask]
@@ -375,14 +375,12 @@ class MultichoiceLogit:
             grad_weight_t = np.where(clipped_mask, (1/P_raw) * dP_dVt, 0.0)  # Shape: (n_dual,)
             grad_contrib_t = grad_weight_t[:, np.newaxis] * X_i  # Shape: (n_dual, K)
 
-            # Vectorized scatter-add for s and t alternatives (no Python loops!)
-            # Complexity: O(n_dual) - much faster than O(J * n_dual) with loops
+            # Complexity: O(n_dual) - faster than O(J * n_dual) with loops
             np.add.at(grad, s_idx, grad_contrib_s)
             np.add.at(grad, t_idx, grad_contrib_t)
 
             # For alternatives that are neither s nor t (the 'r' alternatives)
-            # Fully vectorized - no O(J) Python loops!
-            # Memory: O(n_dual * J * K) tensor, but much faster than looping
+            # Memory: O(n_dual * J * K) tensor, but faster than looping
             a_i = a[i_idx]  # Shape: (n_dual, J)
             grad_weight_r = np.where(clipped_mask, (1/P_raw) * common_r, 0.0)  # Shape: (n_dual,)
 
@@ -392,13 +390,21 @@ class MultichoiceLogit:
             is_r[np.arange(n_dual), s_idx] = False
             is_r[np.arange(n_dual), t_idx] = False
 
-            # Compute gradient contributions for all 'r' alternatives at once
-            # grad_weight_r[:, np.newaxis] * a_i: shape (n_dual, J)
-            # X_i[:, np.newaxis, :]: shape (n_dual, 1, K)
-            # Result: (n_dual, J, K) but we only want 'r' alternatives
-            grad_contrib_r_all = (grad_weight_r[:, np.newaxis, np.newaxis] *
-                                  a_i[:, :, np.newaxis] *
-                                  X_i[:, np.newaxis, :])  # Shape: (n_dual, J, K)
+            # Gradient contributions for 'r' alternatives (neither s nor t)
+            # 
+            # For each dual choice observation i and each 'r' alternative j:
+            #   grad_contrib[j] += (1/P) * common_r * a[i,j] * X[i]
+            #
+            # We vectorize this as a 3D tensor multiplication:
+            #   grad_weight_r: (n_dual,)     -> (n_dual, 1, 1)  scalar weight per obs
+            #   a_i:           (n_dual, J)   -> (n_dual, J, 1)  utility weight per alt
+            #   X_i:           (n_dual, K)   -> (n_dual, 1, K)  covariates per obs
+            #   result:        (n_dual, J, K)                   gradient contrib per obs/alt
+            #
+            # Memory: O(n_dual * J * K) — for large datasets, consider chunked processing
+            grad_contrib_r_all = (grad_weight_r[:, np.newaxis, np.newaxis] * # Shape: (n_dual, 1, 1)
+                                  a_i[:, :, np.newaxis] * # Shape: (n_dual, J, 1)
+                                  X_i[:, np.newaxis, :])  # Shape: (n_dual, 1, K)
 
             # Zero out contributions from s and t alternatives
             grad_contrib_r_all[~is_r] = 0
