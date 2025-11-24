@@ -375,30 +375,36 @@ class MultichoiceLogit:
             grad_weight_t = np.where(clipped_mask, (1/P_raw) * dP_dVt, 0.0)  # Shape: (n_dual,)
             grad_contrib_t = grad_weight_t[:, np.newaxis] * X_i  # Shape: (n_dual, K)
 
-            # Accumulate gradient for s alternatives
-            for j in range(self.J):
-                mask_s = (s_idx == j)
-                if np.any(mask_s):
-                    grad[j] += np.sum(grad_contrib_s[mask_s], axis=0)
-
-                mask_t = (t_idx == j)
-                if np.any(mask_t):
-                    grad[j] += np.sum(grad_contrib_t[mask_t], axis=0)
+            # Vectorized scatter-add for s and t alternatives (no Python loops!)
+            # Complexity: O(n_dual) - much faster than O(J * n_dual) with loops
+            np.add.at(grad, s_idx, grad_contrib_s)
+            np.add.at(grad, t_idx, grad_contrib_t)
 
             # For alternatives that are neither s nor t (the 'r' alternatives)
-            # Create mask for each alternative
+            # Fully vectorized - no O(J) Python loops!
+            # Memory: O(n_dual * J * K) tensor, but much faster than looping
             a_i = a[i_idx]  # Shape: (n_dual, J)
-            # Gradient = 0 if probability was clipped
             grad_weight_r = np.where(clipped_mask, (1/P_raw) * common_r, 0.0)  # Shape: (n_dual,)
 
-            for j in range(self.J):
-                # Mask where j is neither s nor t
-                mask_r = (s_idx != j) & (t_idx != j)
-                if np.any(mask_r):
-                    # Get a_j values where j is 'r'
-                    a_j = a_i[mask_r, j]  # Shape: (n_mask,)
-                    grad_contrib_r = (grad_weight_r[mask_r] * a_j)[:, np.newaxis] * X_i[mask_r]
-                    grad[j] += np.sum(grad_contrib_r, axis=0)
+            # Create mask: True where alternative is neither s nor t for each observation
+            # Shape: (n_dual, J) - True if alternative j is 'r' for observation i
+            is_r = np.ones((n_dual, self.J), dtype=bool)
+            is_r[np.arange(n_dual), s_idx] = False
+            is_r[np.arange(n_dual), t_idx] = False
+
+            # Compute gradient contributions for all 'r' alternatives at once
+            # grad_weight_r[:, np.newaxis] * a_i: shape (n_dual, J)
+            # X_i[:, np.newaxis, :]: shape (n_dual, 1, K)
+            # Result: (n_dual, J, K) but we only want 'r' alternatives
+            grad_contrib_r_all = (grad_weight_r[:, np.newaxis, np.newaxis] *
+                                  a_i[:, :, np.newaxis] *
+                                  X_i[:, np.newaxis, :])  # Shape: (n_dual, J, K)
+
+            # Zero out contributions from s and t alternatives
+            grad_contrib_r_all[~is_r] = 0
+
+            # Sum over dual choices and add to gradient for each alternative
+            grad += grad_contrib_r_all.sum(axis=0)  # Sum over n_dual, result: (J, K)
 
         # Return negative gradient for minimization, remove fixed class 0
         return -grad[1:].flatten()
