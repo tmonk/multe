@@ -51,8 +51,7 @@ class MultichoiceLogit:
         self.optimization_result_: Optional[OptimizeResult] = None
 
     def transform_params(
-        self,
-        flat_beta: npt.NDArray[np.float64]
+        self, flat_beta: npt.NDArray[np.float64]
     ) -> npt.NDArray[np.float64]:
         """
         Reshapes a flat parameter vector into a (J, K) matrix, handling identification.
@@ -79,9 +78,7 @@ class MultichoiceLogit:
         return np.vstack([beta_fixed, beta_free])
 
     def calculate_utilities(
-        self,
-        X: npt.NDArray[np.float64],
-        beta: npt.NDArray[np.float64]
+        self, X: npt.NDArray[np.float64], beta: npt.NDArray[np.float64]
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         """
         Computes the deterministic utility V and the exponentiated utility a.
@@ -105,7 +102,9 @@ class MultichoiceLogit:
         self,
         y_single: npt.NDArray[np.int8],
         y_dual: npt.NDArray[np.int8],
-    ) -> tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    ) -> tuple[
+        tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray, np.ndarray]
+    ]:
         """
         Pre-process data into sparse index format for faster iteration.
         """
@@ -253,17 +252,17 @@ class MultichoiceLogit:
         # single_indices = (row_idx, col_idx)
         if len(single_indices[0]) > 0:
             row_idx, col_idx = single_indices
-            
+
             # Extract V for chosen alternatives
             V_chosen = V[row_idx, col_idx]
-            
+
             # Extract full V for relevant rows
             # We could use row_idx directly but logsumexp over all J is needed
             V_sub = V[row_idx]
-            
+
             # Use logsumexp for numerical stability
             log_sum = logsumexp(V_sub, axis=1)
-            
+
             log_lik += np.sum(V_chosen - log_sum)
 
         # 2. Handle Dual Choices
@@ -282,7 +281,7 @@ class MultichoiceLogit:
             D1 = a_s + R
             D2 = a_t + R
             D3 = a_s + a_t + R
-            
+
             probs = (a_s / D1) + (a_t / D2) - ((a_s + a_t) / D3)
 
             # Safety clipping for numerical stability
@@ -327,27 +326,27 @@ class MultichoiceLogit:
         # 1. Single Choice Gradient (Standard MNL)
         if len(single_indices[0]) > 0:
             row_idx, col_idx = single_indices
-            
+
             X_sub = X[row_idx]
             a_sub = a[row_idx]
-            
-            # Probabilities P(y=j) = exp(V_j) / sum(exp(V_k)) 
+
+            # Probabilities P(y=j) = exp(V_j) / sum(exp(V_k))
             probs = a_sub / np.sum(a_sub, axis=1, keepdims=True)
-            
+
             # Gradient = X * (y - p)
             # y is one-hot, so for chosen col y=1, else 0
             # We can do this by subtracting p from y, but y is sparse indices
             # Easier: grad += X_sub.T @ (y_onehot - probs)
-            # But creating y_onehot is (N_sub, J). 
+            # But creating y_onehot is (N_sub, J).
             # Memory efficient: grad += sum_i (delta_ij - p_ij) * x_i
             # grad += X_sub[y=1] - X_sub.T @ probs
-            
+
             # Add positive term for chosen alternatives (y=1)
-            # X_sub corresponds to row_idx. 
+            # X_sub corresponds to row_idx.
             # We need to add X_i to grad[j] where j is chosen
             # Use np.add.at for sparse addition
             np.add.at(grad, col_idx, X_sub)
-            
+
             # Subtract prob term for all alternatives
             # grad -= probs.T @ X_sub
             grad -= probs.T @ X_sub
@@ -375,7 +374,7 @@ class MultichoiceLogit:
 
             # Clip mask
             clipped_mask = P_raw >= CLIP_THRESHOLD
-            
+
             # Safe division
             inv_P = np.zeros_like(P_raw)
             inv_P[clipped_mask] = 1.0 / P_raw[clipped_mask]
@@ -383,38 +382,38 @@ class MultichoiceLogit:
             # Derivatives
             dP_dVs = a_s * R * (1 / (D1**2) - 1 / (D3**2))
             dP_dVt = a_t * R * (1 / (D2**2) - 1 / (D3**2))
-            common_r = ((a_s + a_t) / (D3**2) - a_s / (D1**2) - a_t / (D2**2))
+            common_r = (a_s + a_t) / (D3**2) - a_s / (D1**2) - a_t / (D2**2)
 
             # Weights for s and t
             w_s = inv_P * dP_dVs
             w_t = inv_P * dP_dVt
-            
+
             # Weights for r (all alternatives)
             w_r = inv_P * common_r
 
             # For 'r' alternatives: grad += sum_i (w_r_i * a_ij) * X_i
             # But we must exclude j=s and j=t
-            
+
             # 1. Compute M = w_r[:, None] * a[i_idx]   (Shape: n_dual, J)
             M = w_r[:, np.newaxis] * a[i_idx]
-            
+
             # 2. Zero out columns s and t for each row
             # Advanced indexing to set specific elements to 0
             rows = np.arange(n_dual)
             M[rows, s_idx] = 0.0
             M[rows, t_idx] = 0.0
-            
+
             # 3. Compute gradient contribution from r-terms using matrix multiplication
             # grad += M.T @ X_i
             grad += M.T @ X_i
-            
+
             # 4. Add contributions from s and t
             # grad[s] += sum(w_s * X_i)
             # grad[t] += sum(w_t * X_i)
-            
+
             grad_contrib_s = w_s[:, np.newaxis] * X_i
             grad_contrib_t = w_t[:, np.newaxis] * X_i
-            
+
             np.add.at(grad, s_idx, grad_contrib_s)
             np.add.at(grad, t_idx, grad_contrib_t)
 
@@ -449,7 +448,7 @@ class MultichoiceLogit:
         """
         self._validate_data(X, y_single, y_dual)
         single_indices, dual_indices = self._prepare_data(y_single, y_dual)
-        
+
         n_params = len(flat_beta)
         hessian = np.zeros((n_params, n_params))
 
@@ -462,7 +461,9 @@ class MultichoiceLogit:
             beta_minus[j] -= HESSIAN_EPSILON
 
             grad_plus = self._gradient_fast(beta_plus, X, single_indices, dual_indices)
-            grad_minus = self._gradient_fast(beta_minus, X, single_indices, dual_indices)
+            grad_minus = self._gradient_fast(
+                beta_minus, X, single_indices, dual_indices
+            )
 
             # Central difference: O(ε²) accuracy
             hessian[:, j] = (grad_plus - grad_minus) / (2 * HESSIAN_EPSILON)
