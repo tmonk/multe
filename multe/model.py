@@ -4,15 +4,27 @@ Multichoice Logit Model
 Vectorized implementation for fast and accurate MLE estimation.
 """
 
-from typing import Tuple, Optional, Dict, Any
+from __future__ import annotations
+
+import typing
+from typing import Any, Optional, Sequence
+
 import numpy as np
 import numpy.typing as npt
-from scipy.optimize import minimize, OptimizeResult
+import scipy.sparse as sp
+from scipy.optimize import OptimizeResult, minimize
 from scipy.special import logsumexp
 
 # Numerical constants for stability and accuracy
 CLIP_THRESHOLD = 1e-10  # Minimum probability value (avoid log(0))
 HESSIAN_EPSILON = 1e-5  # Step size for Hessian finite differences
+
+DualInput = (
+    npt.NDArray[np.int8]
+    | npt.NDArray[np.int64]
+    | tuple[np.ndarray, np.ndarray, np.ndarray]
+    | sp.spmatrix
+)
 
 
 class MultichoiceLogit:
@@ -46,10 +58,12 @@ class MultichoiceLogit:
         self.K = num_covariates
 
         # Fitted attributes (set by fit method)
-        self.coef_: Optional[npt.NDArray[np.float64]] = None
-        self.optimization_result_: Optional[OptimizeResult] = None
+        self.coef_: npt.NDArray[np.float64] | None = None
+        self.optimization_result_: OptimizeResult | None = None
 
-    def transform_params(self, flat_beta: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+    def transform_params(
+        self, flat_beta: npt.NDArray[np.float64]
+    ) -> npt.NDArray[np.float64]:
         """
         Reshapes a flat parameter vector into a (J, K) matrix, handling identification.
 
@@ -76,7 +90,7 @@ class MultichoiceLogit:
 
     def calculate_utilities(
         self, X: npt.NDArray[np.float64], beta: npt.NDArray[np.float64]
-    ) -> Tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         """
         Computes the deterministic utility V and the exponentiated utility a.
 
@@ -95,91 +109,55 @@ class MultichoiceLogit:
         a = np.exp(V_stable)
         return V, a
 
-    def fit(
-        self,
-        X: npt.NDArray[np.float64],
-        y_single: npt.NDArray[np.int8],
-        y_dual: npt.NDArray[np.int8],
-        init_beta: Optional[npt.NDArray[np.float64]] = None,
-        method: str = "L-BFGS-B",
-        options: Optional[Dict[str, Any]] = None,
-    ) -> "MultichoiceLogit":
+    def _normalize_dual_indices(
+        self, y_dual: DualInput, *, N: int, J: int
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Fit the multichoice logit model using maximum likelihood estimation.
+        Convert dual choice inputs into index triplets (rows, s, t).
+        Accepts dense tensors, scipy sparse matrices (shape N x J*J),
+        or explicit index tuples.
 
-        This is a convenience method that wraps scipy.optimize.minimize with sensible
-        defaults. For more control over optimization, you can call neg_log_likelihood
-        and gradient directly with your own optimizer.
-
-        Args:
-            X (np.ndarray): Covariate matrix of shape (N, K).
-            y_single (np.ndarray): Binary matrix (N, J). y_single[i, j] = 1 if i chose j alone.
-            y_dual (np.ndarray): Binary tensor (N, J, J). y_dual[i, s, t] = 1 if i chose pair {s, t}.
-            init_beta (np.ndarray, optional): Initial parameter values (flat array of size (J-1)*K).
-                                              If None, initializes to zeros.
-            method (str): Optimization method for scipy.optimize.minimize. Default is 'L-BFGS-B'.
-                         Other good options: 'BFGS', 'Newton-CG'.
-            options (dict, optional): Additional options to pass to the optimizer.
-                                     Default is {'gtol': 1e-5, 'maxiter': 1000}.
-
-        Returns:
-            self: Returns the instance itself for method chaining.
-
-        Raises:
-            ValueError: If data dimensions are incompatible or constraints are violated.
-            RuntimeError: If optimization fails to converge.
-
-        Example:
-            >>> from multe import MultichoiceLogit, simulate_data
-            >>> X, y_single, y_dual, true_beta = simulate_data(N=1000, J=3, K=2)
-            >>> model = MultichoiceLogit(num_alternatives=3, num_covariates=2)
-            >>> model.fit(X, y_single, y_dual)
-            >>> print(model.coef_)  # Estimated coefficients
+        Sparse flattening uses row-major order: column = s * J + t.
         """
-        # Set default options
-        if options is None:
-            options = {"gtol": 1e-5, "maxiter": 1000}
-
-        # Initialize parameters
-        if init_beta is None:
-            init_beta = np.zeros((self.J - 1) * self.K)
-        else:
-            # Validate initial parameters
-            expected_size = (self.J - 1) * self.K
-            if init_beta.size != expected_size:
-                raise ValueError(
-                    f"init_beta must have size {expected_size}, got {init_beta.size}"
-                )
-
-        # Run optimization
-        result = minimize(
-            fun=self.neg_log_likelihood,
-            jac=self.gradient,
-            x0=init_beta,
-            args=(X, y_single, y_dual),
-            method=method,
-            options=options,
-        )
-
-        # Check convergence
-        if not result.success:
-            raise RuntimeError(
-                f"Optimization failed to converge: {result.message}\n"
-                f"Try a different optimization method or adjust tolerance."
+        if isinstance(y_dual, tuple):
+            if len(y_dual) != 3:
+                raise ValueError("y_dual tuple must have length 3 (rows, s, t)")
+            rows, s_idx, t_idx = y_dual
+            if not (len(rows) == len(s_idx) == len(t_idx)):
+                raise ValueError("y_dual index arrays must have the same length")
+            return (
+                np.asarray(rows, dtype=np.int64),
+                np.asarray(s_idx, dtype=np.int64),
+                np.asarray(t_idx, dtype=np.int64),
             )
 
-        # Store results
-        self.coef_ = result.x.reshape(self.J - 1, self.K)
-        self.optimization_result_ = result
+        if sp.issparse(y_dual):
+            coo = y_dual.tocoo()
+            rows = coo.row
+            cols = coo.col
+            s_idx = cols // J
+            t_idx = cols % J
+            return rows.astype(np.int64), s_idx.astype(np.int64), t_idx.astype(np.int64)
 
-        return self
+        if isinstance(y_dual, np.ndarray):
+            dual_rows, dual_s, dual_t = np.nonzero(y_dual)
+            return dual_rows, dual_s, dual_t
+
+        raise TypeError("Unsupported y_dual type")
+
+    def _validate_binary(self, arr: np.ndarray, name: str) -> None:
+        """Ensure array contains only 0/1 values."""
+        if not np.isin(arr, (0, 1)).all():
+            raise ValueError(f"{name} must be binary (contain only 0 or 1).")
 
     def _validate_data(
         self,
         X: npt.NDArray[np.float64],
         y_single: npt.NDArray[np.int8],
-        y_dual: npt.NDArray[np.int8],
-    ) -> None:
+        y_dual: DualInput,
+        *,
+        dual_indices: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Validate input data dimensions and constraints."""
         N = X.shape[0]
 
@@ -191,79 +169,237 @@ class MultichoiceLogit:
                 f"y_single must have shape ({N}, {self.J}), got {y_single.shape}"
             )
 
-        if y_dual.shape != (N, self.J, self.J):
-            raise ValueError(
-                f"y_dual must have shape ({N}, {self.J}, {self.J}), got {y_dual.shape}"
+        self._validate_binary(y_single, "y_single")
+
+        # Normalize dual indices for validation
+        if dual_indices is None:
+            dual_rows, dual_s, dual_t = self._normalize_dual_indices(
+                y_dual, N=N, J=self.J
             )
+        else:
+            dual_rows, dual_s, dual_t = dual_indices
+
+        # Bounds checks
+        if len(dual_rows) > 0:
+            if dual_rows.max() >= N or dual_rows.min() < 0:
+                raise ValueError("y_dual row indices out of bounds.")
+            if dual_s.max() >= self.J or dual_t.max() >= self.J or dual_s.min() < 0:
+                raise ValueError("y_dual alternative indices out of bounds.")
+
+        # Enforce upper triangle only and no diagonal
+        if np.any(dual_s == dual_t):
+            raise ValueError("y_dual diagonal must be zero.")
+        if np.any(dual_s > dual_t):
+            # Check that dual choices are in upper triangle (s < t)
+            raise ValueError("y_dual must only have entries in upper triangle (s < t).")
+        # Check that dual choices are in upper triangle (s < t)
+
+        # Binary checks for dense/sparse
+        if isinstance(y_dual, np.ndarray):
+            if y_dual.shape != (N, self.J, self.J):
+                raise ValueError(
+                    f"y_dual must have shape ({N}, {self.J}, {self.J}), got {y_dual.shape}"
+                )
+            self._validate_binary(y_dual, "y_dual")
+        elif sp.issparse(y_dual):
+            if y_dual.shape != (N, self.J * self.J):
+                raise ValueError(
+                    f"sparse y_dual must have shape ({N}, {self.J * self.J})"
+                )
+            if y_dual.data.size and not np.isin(y_dual.data, (0, 1)).all():
+                raise ValueError("Sparse y_dual must be binary.")
 
         # Check that each agent has exactly one choice
-        single_choices = y_single.sum(axis=1)
-        dual_choices = y_dual.sum(axis=(1, 2))
-        total_choices = single_choices + dual_choices
+        single_rows = np.nonzero(y_single)[0]
+        counts = np.bincount(single_rows, minlength=N)
+        if len(dual_rows) > 0:
+            counts += np.bincount(dual_rows, minlength=N)
 
-        if not np.all(total_choices == 1):
-            invalid = np.where(total_choices != 1)[0]
+        # Check that each agent has exactly one choice
+        if not np.all(counts == 1):
+            invalid = np.where(counts != 1)[0]
             raise ValueError(
                 f"Each agent must have exactly one choice. "
                 f"Agents with invalid choices: {invalid[:10]}"
                 + ("..." if len(invalid) > 10 else "")
             )
+        return dual_rows, dual_s, dual_t
 
-        # Check that dual choices are in upper triangle (s < t)
-        if np.any(y_dual):
-            lower_triangle = np.tril_indices(self.J, k=0)
-            if np.any(y_dual[:, lower_triangle[0], lower_triangle[1]]):
-                raise ValueError(
-                    "y_dual must only have entries in upper triangle (s < t)"
-                )
-
-    def neg_log_likelihood(
+    def _prepare_data(
         self,
-        flat_beta: npt.NDArray[np.float64],
+        y_single: npt.NDArray[np.int8],
+        y_dual: DualInput,
+        *,
+        N: Optional[int] = None,
+        J: Optional[int] = None,
+        dual_indices: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
+    ) -> tuple[
+        tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray, np.ndarray]
+    ]:
+        """
+        Pre-process data into sparse index format for faster iteration.
+        Supports dense (N,J,J) tensors, scipy sparse matrices of shape (N, J*J),
+        or explicit index tuples (rows, s, t).
+        """
+        single_rows, single_cols = np.nonzero(y_single)
+        if dual_indices is None:
+            dual_rows, dual_s, dual_t = self._normalize_dual_indices(
+                y_dual, N=N if N is not None else y_single.shape[0], J=J or self.J
+            )
+        else:
+            dual_rows, dual_s, dual_t = dual_indices
+        return (single_rows, single_cols), (dual_rows, dual_s, dual_t)
+
+    def fit(
+        self,
         X: npt.NDArray[np.float64],
         y_single: npt.NDArray[np.int8],
-        y_dual: npt.NDArray[np.int8],
-    ) -> float:
+        y_dual: DualInput,
+        init_beta: Optional[npt.NDArray[np.float64]] = None,
+        method: str = "L-BFGS-B",
+        options: Optional[dict[str, Any]] = None,
+        bounds: Optional[Sequence[tuple[float | None, float | None]]] = None,
+        constraints: Optional[Sequence[Any]] = None,
+        num_restarts: int = 0,
+        restart_scale: float = 0.5,
+        rng: Optional[np.random.Generator] = None,
+    ) -> "MultichoiceLogit":
         """
-        Computes the negative log-likelihood of the model for minimization.
-        Vectorized version for faster computation.
+        Fit the multichoice logit model using maximum likelihood estimation.
+
+        This is a convenience method that wraps scipy.optimize.minimize with sensible
+        defaults. For more control over optimization, you can call neg_log_likelihood
+        and gradient directly with your own optimizer.
 
         Args:
-            flat_beta (np.ndarray): 1D array of parameters optimization is performed on.
-            X (np.ndarray): Covariates of shape (N, K).
+            X (np.ndarray): Covariate matrix of shape (N, K).
             y_single (np.ndarray): Binary matrix (N, J). y_single[i, j] = 1 if i chose j alone.
-            y_dual (np.ndarray): Binary tensor (N, J, J). y_dual[i, s, t] = 1 if i chose pair {s, t}.
+            y_dual (DualInput): Binary tensor (N, J, J), sparse matrix (N, J*J),
+                                or index triplet (rows, s, t) for dual choices.
+            init_beta (np.ndarray, optional): Initial parameter values (flat array of size (J-1)*K).
+                                              If None, initializes to zeros.
+            method (str): Optimization method for scipy.optimize.minimize. Default is 'L-BFGS-B'.
+                         Other good options: 'BFGS', 'Newton-CG'.
+            options (dict, optional): Additional options to pass to the optimizer.
+                                     Default is {'gtol': 1e-5, 'maxiter': 1000}.
+            bounds (Sequence, optional): Bounds to pass to scipy.optimize.minimize.
+            constraints (Sequence, optional): Constraints to pass to minimize.
+            num_restarts (int): Number of random restarts to perform beyond init_beta.
+            restart_scale (float): Scale of normal noise for restart initialization.
+            rng (np.random.Generator, optional): Random generator for restarts.
 
         Returns:
-            float: The negative log-likelihood value (scalar).
+            self: Returns the instance itself for method chaining.
 
         Raises:
             ValueError: If data dimensions are incompatible or constraints are violated.
+            RuntimeError: If optimization fails to converge.
+
+        Example:
+            >>> from multe import MultichoiceLogit, simulate_data
+            >>> X, y_single, y_dual, _ = simulate_data(N=1000, J=3, K=2)
+            >>> model = MultichoiceLogit(num_alternatives=3, num_covariates=2)
+            >>> model.fit(X, y_single, y_dual)
+            >>> print(model.coef_)  # Estimated coefficients
         """
-        self._validate_data(X, y_single, y_dual)
+        # Set default options
+        if options is None:
+            options = {"gtol": 1e-5, "maxiter": 1000}
+
+        # Validate data and prepare indices once
+        dual_indices = self._validate_data(X, y_single, y_dual)
+        single_indices, dual_indices = self._prepare_data(
+            y_single, y_dual, N=X.shape[0], J=self.J, dual_indices=dual_indices
+        )
+
+        # Initialize parameters
+        expected_size = (self.J - 1) * self.K
+        if init_beta is None:
+            init_beta = np.zeros(expected_size)
+        else:
+            # Validate initial parameters
+            if init_beta.size != expected_size:
+                raise ValueError(
+                    f"init_beta must have size {expected_size}, got {init_beta.size}"
+                )
+
+        rng = rng or np.random.default_rng()
+
+        def run_optimization(start_beta: npt.NDArray[np.float64]) -> OptimizeResult:
+            # Run optimization for a given starting point
+            return minimize(
+                fun=self._neg_log_likelihood_fast,
+                jac=self._gradient_fast,
+                x0=start_beta,
+                args=(X, single_indices, dual_indices),
+                method=method,
+                bounds=bounds,
+                constraints=constraints,
+                options=options,
+            )
+
+        best_result: OptimizeResult | None = None
+        start_points = [init_beta]
+        if num_restarts > 0:
+            noise = rng.normal(scale=restart_scale, size=(num_restarts, expected_size))
+            start_points.extend(init_beta + noise_i for noise_i in noise)
+
+        for start in start_points:
+            # Run optimization
+            result = run_optimization(start)
+            if best_result is None or result.fun < best_result.fun:
+                best_result = result
+
+        assert best_result is not None
+
+        # Check convergence
+        if not best_result.success:
+            raise RuntimeError(
+                f"Optimization failed to converge: {best_result.message}\n"
+                f"Try a different optimization method or adjust tolerance."
+            )
+
+        # Store results
+        self.coef_ = best_result.x.reshape(self.J - 1, self.K)
+        self.optimization_result_ = best_result
+
+        return self
+
+    def _neg_log_likelihood_fast(
+        self,
+        flat_beta: npt.NDArray[np.float64],
+        X: npt.NDArray[np.float64],
+        single_indices: tuple[np.ndarray, np.ndarray],
+        dual_indices: tuple[np.ndarray, np.ndarray, np.ndarray],
+    ) -> float:
+        """
+        Internal optimized NLL using pre-computed indices.
+        """
         beta = self.transform_params(flat_beta)
         V, a = self.calculate_utilities(X, beta)
 
         log_lik = 0.0
 
         # 1. Handle Single Choices (MNL)
-        single_choice_mask = y_single.sum(axis=1) > 0
-        if np.any(single_choice_mask):
-            V_sub = V[single_choice_mask]
-            y_sub = y_single[single_choice_mask]
-            term1 = np.sum(y_sub * V_sub)
+        # single_indices = (row_idx, col_idx)
+        if len(single_indices[0]) > 0:
+            row_idx, col_idx = single_indices
+
+            # Extract V for chosen alternatives
+            V_chosen = V[row_idx, col_idx]
+
+            # Extract full V for relevant rows
+            V_sub = V[row_idx]
+
             # Use logsumexp for numerical stability (avoids overflow in exp)
-            term2 = np.sum(logsumexp(V_sub, axis=1))
-            log_lik += (term1 - term2)
+            log_sum = logsumexp(V_sub, axis=1)
+
+            log_lik += np.sum(V_chosen - log_sum)
 
         # 2. Handle Dual Choices
-        dual_indices = np.argwhere(y_dual > 0)
-
-        if len(dual_indices) > 0:
+        if len(dual_indices[0]) > 0:
             # Extract all dual choice indices at once
-            i_idx = dual_indices[:, 0]
-            s_idx = dual_indices[:, 1]
-            t_idx = dual_indices[:, 2]
+            i_idx, s_idx, t_idx = dual_indices
 
             # Get utilities for all dual choices at once
             a_s = a[i_idx, s_idx]  # Shape: (n_dual,)
@@ -273,79 +409,92 @@ class MultichoiceLogit:
             a_sum = np.sum(a[i_idx], axis=1)  # Shape: (n_dual,)
             R = a_sum - a_s - a_t  # Shape: (n_dual,)
 
-            # Vectorized probability computation
+            # Vectorized probability computation using inclusion-exclusion:
             # P = a_s/(a_s+R) + a_t/(a_t+R) - (a_s+a_t)/(a_s+a_t+R)
-            p1 = a_s / (a_s + R)
-            p2 = a_t / (a_t + R)
-            p3 = (a_s + a_t) / (a_s + a_t + R)
+            # Vectorized probability computation
+            D1 = a_s + R
+            D2 = a_t + R
+            D3 = a_s + a_t + R
 
-            probs = p1 + p2 - p3
+            probs = (a_s / D1) + (a_t / D2) - ((a_s + a_t) / D3)
 
             # Safety clipping for numerical stability
-            probs = np.maximum(probs, CLIP_THRESHOLD)
+            probs = np.maximum(probs, CLIP_THRESHOLD)  # Clipped for likelihood
 
             # Sum log probabilities
             log_lik += np.sum(np.log(probs))
 
         return -log_lik
 
-    def gradient(
+    def neg_log_likelihood(
         self,
         flat_beta: npt.NDArray[np.float64],
         X: npt.NDArray[np.float64],
         y_single: npt.NDArray[np.int8],
-        y_dual: npt.NDArray[np.int8],
-    ) -> npt.NDArray[np.float64]:
+        y_dual: DualInput,
+    ) -> float:
         """
-        Computes the analytical gradient (Jacobian) of the negative log-likelihood.
+        Computes the negative log-likelihood of the model.
+        Wrapper for public API compliance that computes indices on the fly.
 
         Args:
-            flat_beta (np.ndarray): 1D array of parameters.
-            X (np.ndarray): Covariates of shape (N, K).
-            y_single (np.ndarray): Single choice indicators (N, J).
-            y_dual (np.ndarray): Dual choice indicators (N, J, J).
+            flat_beta: Parameter vector ((J-1)*K).
+            X: Covariate matrix (N, K).
+            y_single: Single-choice indicators (N, J).
+            y_dual: Dual-choice indicators (dense, sparse, or index triplet).
 
         Returns:
-            np.ndarray: Flattened gradient vector of shape ((J-1)*K, ).
-
-        Raises:
-            ValueError: If data dimensions are incompatible or constraints are violated.
+            Scalar negative log-likelihood.
         """
-        self._validate_data(X, y_single, y_dual)
+        dual_indices = self._validate_data(X, y_single, y_dual)
+        single_indices, dual_indices = self._prepare_data(
+            y_single, y_dual, N=X.shape[0], J=self.J, dual_indices=dual_indices
+        )
+        return self._neg_log_likelihood_fast(flat_beta, X, single_indices, dual_indices)
+
+    def _gradient_fast(
+        self,
+        flat_beta: npt.NDArray[np.float64],
+        X: npt.NDArray[np.float64],
+        single_indices: tuple[np.ndarray, np.ndarray],
+        dual_indices: tuple[np.ndarray, np.ndarray, np.ndarray],
+    ) -> npt.NDArray[np.float64]:
+        """
+        Internal optimized gradient using pre-computed indices and matrix multiplication.
+        """
         beta = self.transform_params(flat_beta)
         V, a = self.calculate_utilities(X, beta)
 
+        # Gradient buffer for all parameters (J, K); flattened later to ((J-1)*K,)
         # Gradient buffer for all parameters (J, K)
         grad = np.zeros((self.J, self.K))
 
         # 1. Single Choice Gradient (Standard MNL)
-        single_mask = y_single.sum(axis=1) > 0
-        if np.any(single_mask):
-            X_sub = X[single_mask]
-            a_sub = a[single_mask]
-            y_sub = y_single[single_mask]
+        if len(single_indices[0]) > 0:
+            row_idx, col_idx = single_indices
+
+            X_sub = X[row_idx]
+            a_sub = a[row_idx]
+
+            # Probabilities P(y=j) = exp(V_j) / sum(exp(V_k))
             probs = a_sub / np.sum(a_sub, axis=1, keepdims=True)
-            error = y_sub - probs
-            grad += error.T @ X_sub
 
+            # Add positive term for chosen alternatives (y=1)
+            np.add.at(grad, col_idx, X_sub)
+
+            # Subtract prob term for all alternatives
+            grad -= probs.T @ X_sub
         # 2. Dual Choice Gradient
-        dual_indices = np.argwhere(y_dual > 0)
-
-        if len(dual_indices) > 0:
-            # Extract indices
-            i_idx = dual_indices[:, 0]
-            s_idx = dual_indices[:, 1]
-            t_idx = dual_indices[:, 2]
-
+        if len(dual_indices[0]) > 0:
+            i_idx, s_idx, t_idx = dual_indices
             n_dual = len(i_idx)
 
-            # Get covariates and utilities for all dual choices
-            X_i = X[i_idx]  # Shape: (n_dual, K)
-            a_s = a[i_idx, s_idx]  # Shape: (n_dual,)
-            a_t = a[i_idx, t_idx]  # Shape: (n_dual,)
+            # Covariates/utilities for dual choices
+            X_i = X[i_idx]  # (n_dual, K)
+            a_s = a[i_idx, s_idx]  # (n_dual,)
+            a_t = a[i_idx, t_idx]  # (n_dual,)
 
-            # Compute R and denominators
-            a_sum = np.sum(a[i_idx], axis=1)  # Shape: (n_dual,)
+            a_sum = np.sum(a[i_idx], axis=1)  # (n_dual,)
             R = a_sum - a_s - a_t
 
             D1 = a_s + R
@@ -353,122 +502,244 @@ class MultichoiceLogit:
             D3 = a_s + a_t + R
 
             # Probability (unclipped for gradient computation)
-            P_raw = (a_s/D1) + (a_t/D2) - ((a_s+a_t)/D3)
+            P_raw = (a_s / D1) + (a_t / D2) - ((a_s + a_t) / D3)
 
-            # Clip for numerical stability (use module constant)
-            P = np.maximum(P_raw, CLIP_THRESHOLD)  # Clipped for likelihood
-
-            # Mask for where clipping occurred (gradient should be 0)
             clipped_mask = P_raw >= CLIP_THRESHOLD
+            inv_P = np.zeros_like(P_raw)
+            inv_P[clipped_mask] = 1.0 / P_raw[clipped_mask]
 
-            # Precompute derivatives
-            dP_dVs = a_s * R * (1/(D1**2) - 1/(D3**2))  # Shape: (n_dual,)
-            dP_dVt = a_t * R * (1/(D2**2) - 1/(D3**2))  # Shape: (n_dual,)
-            common_r = (a_s+a_t)/(D3**2) - a_s/(D1**2) - a_t/(D2**2)  # Shape: (n_dual,)
+            # Derivatives
+            dP_dVs = a_s * R * (1 / (D1**2) - 1 / (D3**2))  # (n_dual,)
+            dP_dVt = a_t * R * (1 / (D2**2) - 1 / (D3**2))  # (n_dual,)
+            common_r = (
+                (a_s + a_t) / (D3**2) - a_s / (D1**2) - a_t / (D2**2)
+            )  # (n_dual,)
 
-            # Compute gradient contributions for s and t
-            # For alternative s (gradient = 0 if probability was clipped)
-            grad_weight_s = np.where(clipped_mask, (1/P_raw) * dP_dVs, 0.0)  # Shape: (n_dual,)
-            grad_contrib_s = grad_weight_s[:, np.newaxis] * X_i  # Shape: (n_dual, K)
+            w_s = inv_P * dP_dVs  # (n_dual,)
+            w_t = inv_P * dP_dVt  # (n_dual,)
+            w_r = inv_P * common_r  # (n_dual,)
+            # Complexity: O(n_dual) weight computations; still cheaper than looping over J.
 
-            # For alternative t (gradient = 0 if probability was clipped)
-            grad_weight_t = np.where(clipped_mask, (1/P_raw) * dP_dVt, 0.0)  # Shape: (n_dual,)
-            grad_contrib_t = grad_weight_t[:, np.newaxis] * X_i  # Shape: (n_dual, K)
+            # 'r' alternatives (neither s nor t): grad += sum_i (w_r_i * a_ij) * X_i
+            a_i = a[i_idx]  # (n_dual, J)
+            M = w_r[:, np.newaxis] * a_i
+            rows = np.arange(n_dual)
+            M[rows, s_idx] = 0.0
+            M[rows, t_idx] = 0.0
 
-            # Complexity: O(n_dual) - faster than O(J * n_dual) with loops
+            # This is an O(n_dual * J * K) dense step; faster than looping for typical J.
+            grad += M.T @ X_i
+
+            # Add contributions from s and t (O(n_dual))
+            grad_contrib_s = w_s[:, np.newaxis] * X_i  # (n_dual, K)
+            grad_contrib_t = w_t[:, np.newaxis] * X_i  # (n_dual, K)
+
             np.add.at(grad, s_idx, grad_contrib_s)
             np.add.at(grad, t_idx, grad_contrib_t)
-
-            # For alternatives that are neither s nor t (the 'r' alternatives)
-            # Memory: O(n_dual * J * K) tensor, but faster than looping
-            a_i = a[i_idx]  # Shape: (n_dual, J)
-            grad_weight_r = np.where(clipped_mask, (1/P_raw) * common_r, 0.0)  # Shape: (n_dual,)
-
-            # Create mask: True where alternative is neither s nor t for each observation
-            # Shape: (n_dual, J) - True if alternative j is 'r' for observation i
-            is_r = np.ones((n_dual, self.J), dtype=bool)
-            is_r[np.arange(n_dual), s_idx] = False
-            is_r[np.arange(n_dual), t_idx] = False
-
-            # Gradient contributions for 'r' alternatives (neither s nor t)
-            # 
-            # For each dual choice observation i and each 'r' alternative j:
-            #   grad_contrib[j] += (1/P) * common_r * a[i,j] * X[i]
-            #
-            # We vectorize this as a 3D tensor multiplication:
-            #   grad_weight_r: (n_dual,)     -> (n_dual, 1, 1)  scalar weight per obs
-            #   a_i:           (n_dual, J)   -> (n_dual, J, 1)  utility weight per alt
-            #   X_i:           (n_dual, K)   -> (n_dual, 1, K)  covariates per obs
-            #   result:        (n_dual, J, K)                   gradient contrib per obs/alt
-            #
-            # Memory: O(n_dual * J * K) — for large datasets, consider chunked processing
-            grad_contrib_r_all = (grad_weight_r[:, np.newaxis, np.newaxis] * # Shape: (n_dual, 1, 1)
-                                  a_i[:, :, np.newaxis] * # Shape: (n_dual, J, 1)
-                                  X_i[:, np.newaxis, :])  # Shape: (n_dual, 1, K)
-
-            # Zero out contributions from s and t alternatives
-            grad_contrib_r_all[~is_r] = 0
-
-            # Sum over dual choices and add to gradient for each alternative
-            grad += grad_contrib_r_all.sum(axis=0)  # Sum over n_dual, result: (J, K)
-
         # Return negative gradient for minimization, remove fixed class 0
         return -grad[1:].flatten()
+
+    def gradient(
+        self,
+        flat_beta: npt.NDArray[np.float64],
+        X: npt.NDArray[np.float64],
+        y_single: npt.NDArray[np.int8],
+        y_dual: DualInput,
+    ) -> npt.NDArray[np.float64]:
+        """
+        Computes the analytical gradient (Jacobian).
+        Wrapper for public API compliance that computes indices on the fly.
+
+        Args:
+            flat_beta: Parameter vector ((J-1)*K).
+            X: Covariate matrix (N, K).
+            y_single: Single-choice indicators (N, J).
+            y_dual: Dual-choice indicators (dense, sparse, or index triplet).
+
+        Returns:
+            Gradient vector ((J-1)*K,).
+        """
+        dual_indices = self._validate_data(X, y_single, y_dual)
+        single_indices, dual_indices = self._prepare_data(
+            y_single, y_dual, N=X.shape[0], J=self.J, dual_indices=dual_indices
+        )
+        return self._gradient_fast(flat_beta, X, single_indices, dual_indices)
 
     def compute_standard_errors(
         self,
         flat_beta: npt.NDArray[np.float64],
         X: npt.NDArray[np.float64],
         y_single: npt.NDArray[np.int8],
-        y_dual: npt.NDArray[np.int8],
+        y_dual: DualInput,
+        *,
+        epsilon: float | None = None,
     ) -> npt.NDArray[np.float64]:
         """
         Computes standard errors by approximating the Hessian of the negative log-likelihood
         using central finite differences of the analytical gradient.
 
-        Uses central differences for O(ε²) accuracy vs O(ε) for forward differences.
-
         Args:
-            flat_beta (np.ndarray): Optimal parameters (flattened).
-            X, y_single, y_dual: Data required for gradient calculation.
+            flat_beta: Parameter vector ((J-1)*K).
+            X: Covariate matrix (N, K).
+            y_single: Single-choice indicators (N, J).
+            y_dual: Dual-choice indicators (dense, sparse, or index triplet).
+            epsilon: Optional finite-difference step; defaults to HESSIAN_EPSILON.
 
         Returns:
-            np.ndarray: Standard errors for the parameters.
+            1D array of standard errors ((J-1)*K,).
 
         Raises:
-            ValueError: If data dimensions are incompatible or constraints are violated.
-            RuntimeWarning: If Hessian is singular or ill-conditioned.
+            ValueError: If data validation fails.
         """
-        self._validate_data(X, y_single, y_dual)
+        dual_indices = self._validate_data(X, y_single, y_dual)
+        single_indices, dual_indices = self._prepare_data(
+            y_single, y_dual, N=X.shape[0], J=self.J, dual_indices=dual_indices
+        )
+
         n_params = len(flat_beta)
         hessian = np.zeros((n_params, n_params))
+        step = HESSIAN_EPSILON if epsilon is None else float(epsilon)
 
         # Central finite differences for Hessian (more accurate than forward)
         for j in range(n_params):
             beta_plus = flat_beta.copy()
-            beta_plus[j] += HESSIAN_EPSILON
+            beta_plus[j] += step
 
             beta_minus = flat_beta.copy()
-            beta_minus[j] -= HESSIAN_EPSILON
+            beta_minus[j] -= step
 
-            grad_plus = self.gradient(beta_plus, X, y_single, y_dual)
-            grad_minus = self.gradient(beta_minus, X, y_single, y_dual)
+            grad_plus = self._gradient_fast(beta_plus, X, single_indices, dual_indices)
+            grad_minus = self._gradient_fast(
+                beta_minus, X, single_indices, dual_indices
+            )
 
             # Central difference: O(ε²) accuracy
-            hessian[:, j] = (grad_plus - grad_minus) / (2 * HESSIAN_EPSILON)
+            hessian[:, j] = (grad_plus - grad_minus) / (2 * step)
 
         # Variance-Covariance Matrix is inverse of Hessian
-        try:
-            cov_matrix = np.linalg.inv(hessian)
-            std_errs = np.sqrt(np.diag(cov_matrix))
-        except np.linalg.LinAlgError as e:
+        # Use pinv for stability with near-singular Hessians
+        cov_matrix = np.linalg.pinv(hessian)
+
+        # Check if diagonal elements are positive (valid variance)
+        diag_cov = np.diag(cov_matrix)
+
+        # If any variance is negative (numerical noise with singular hessian), warn
+        if np.any(diag_cov < 0):
             import warnings
 
             warnings.warn(
-                "Hessian is singular or ill-conditioned. Standard errors may be unreliable.",
+                "Hessian inverse has negative diagonal elements. Standard errors may be unreliable.",
                 RuntimeWarning,
                 stacklevel=2,
             )
-            std_errs = np.full(n_params, np.nan)
 
-        return std_errs
+        # Compute standard errors, setting invalid (negative variance) to NaN
+        std_errs = np.sqrt(np.where(diag_cov >= 0, diag_cov, np.nan))
+
+        return typing.cast(npt.NDArray[np.float64], std_errs)
+
+    def predict_proba(
+        self,
+        X: npt.NDArray[np.float64],
+        flat_beta: Optional[npt.NDArray[np.float64]] = None,
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        """
+        Compute predicted probabilities for single and dual choices for new data.
+
+        Args:
+            X: Covariate matrix (N, K)
+            flat_beta: Optional parameter vector ((J-1)*K). Uses fitted coef_ if None.
+
+        Returns:
+            single_probs: (N, J) softmax probabilities for single choices
+            dual_probs: (N, J, J) probabilities for unordered pairs (upper triangle populated)
+
+        Raises:
+            ValueError: If the model is unfitted and no parameters are provided.
+        """
+        if flat_beta is None:
+            if self.coef_ is None:
+                raise ValueError("Model is not fitted. Provide flat_beta or call fit.")
+            flat_beta = self.coef_.flatten()
+
+        beta = self.transform_params(flat_beta)
+        V, a = self.calculate_utilities(X, beta)
+
+        single_probs = a / np.sum(a, axis=1, keepdims=True)
+
+        # Dual probabilities: compute for each pair s<t
+        N, J = X.shape[0], self.J
+        dual_probs = np.zeros((N, J, J))
+        a_sum = np.sum(a, axis=1)
+
+        for s in range(J - 1):
+            a_s = a[:, s]
+            for t in range(s + 1, J):
+                a_t = a[:, t]
+                R = a_sum - a_s - a_t
+                D1 = a_s + R
+                D2 = a_t + R
+                D3 = a_s + a_t + R
+                probs = (a_s / D1) + (a_t / D2) - ((a_s + a_t) / D3)
+                dual_probs[:, s, t] = np.maximum(probs, CLIP_THRESHOLD)
+
+        return single_probs, dual_probs
+
+    def log_likelihood_contributions(
+        self,
+        flat_beta: npt.NDArray[np.float64],
+        X: npt.NDArray[np.float64],
+        y_single: npt.NDArray[np.int8],
+        y_dual: DualInput,
+    ) -> npt.NDArray[np.float64]:
+        """
+        Return per-observation log-likelihood contributions.
+
+        Args:
+            flat_beta: Parameter vector ((J-1)*K).
+            X: Covariate matrix (N, K).
+            y_single: Single-choice indicators (N, J).
+            y_dual: Dual-choice indicators (dense, sparse, or index triplet).
+
+        Returns:
+            Vector of per-observation log-likelihood contributions (N,).
+        """
+        dual_indices = self._validate_data(X, y_single, y_dual)
+        single_indices, dual_indices = self._prepare_data(
+            y_single, y_dual, N=X.shape[0], J=self.J, dual_indices=dual_indices
+        )
+        beta = self.transform_params(flat_beta)
+        V, a = self.calculate_utilities(X, beta)
+        contrib = np.zeros(X.shape[0])
+
+        if len(single_indices[0]) > 0:
+            row_idx, col_idx = single_indices
+            V_chosen = V[row_idx, col_idx]
+            log_sum = logsumexp(V[row_idx], axis=1)
+            contrib[row_idx] = V_chosen - log_sum
+
+        if len(dual_indices[0]) > 0:
+            i_idx, s_idx, t_idx = dual_indices
+            a_s = a[i_idx, s_idx]
+            a_t = a[i_idx, t_idx]
+            a_sum = np.sum(a[i_idx], axis=1)
+            R = a_sum - a_s - a_t
+            probs = (
+                (a_s / (a_s + R)) + (a_t / (a_t + R)) - ((a_s + a_t) / (a_s + a_t + R))
+            )
+            contrib[i_idx] = np.log(np.maximum(probs, CLIP_THRESHOLD))
+            # contrib fills per-observation slots; untouched rows remain zero if no dual/single
+
+        return contrib
+
+    def log_likelihood(
+        self,
+        flat_beta: npt.NDArray[np.float64],
+        X: npt.NDArray[np.float64],
+        y_single: npt.NDArray[np.int8],
+        y_dual: DualInput,
+    ) -> float:
+        """Convenience wrapper returning the sum of log-likelihood contributions."""
+        return float(
+            np.sum(self.log_likelihood_contributions(flat_beta, X, y_single, y_dual))
+        )

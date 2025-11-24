@@ -88,6 +88,21 @@ class TestDataValidation:
         with pytest.raises(ValueError, match="y_dual must have shape"):
             model._validate_data(X, y_single, y_dual_wrong)
 
+    def test_non_binary_inputs(self):
+        """Test that non-binary entries raise ValueError."""
+        N, J, K = 20, 3, 2
+        X, y_single, y_dual, _ = simulate_data(N, J, K, seed=42)
+        model = MultichoiceLogit(J, K)
+
+        y_single[0, 0] = 2
+        with pytest.raises(ValueError, match="binary"):
+            model._validate_data(X, y_single, y_dual)
+
+        y_single[0, 0] = 1  # restore
+        y_dual[0, 1, 2] = 2
+        with pytest.raises(ValueError, match="binary"):
+            model._validate_data(X, y_single, y_dual)
+
     def test_multiple_choices_per_agent(self):
         """Test that multiple choices per agent raises ValueError."""
         N, J, K = 10, 3, 2
@@ -132,6 +147,21 @@ class TestDataValidation:
         y_dual[0, 2, 1] = 1  # s > t (invalid)
 
         with pytest.raises(ValueError, match="upper triangle"):
+            model._validate_data(X, y_single, y_dual)
+
+    def test_dual_choice_on_diagonal(self):
+        """Test that diagonal dual entries raise ValueError."""
+        N, J, K = 10, 3, 2
+        model = MultichoiceLogit(J, K)
+        X = np.random.randn(N, K)
+        y_single = np.zeros((N, J), dtype=np.int8)
+        y_dual = np.zeros((N, J, J), dtype=np.int8)
+        y_single[:, 0] = 1
+
+        y_single[0, 0] = 0
+        y_dual[0, 1, 1] = 1
+
+        with pytest.raises(ValueError, match="diagonal"):
             model._validate_data(X, y_single, y_dual)
 
 
@@ -211,6 +241,21 @@ class TestNegLogLikelihood:
         grad = model.gradient(flat_beta, X, y_single, y_dual)
         assert np.all(np.isfinite(grad))
 
+    def test_sparse_dual_input_equivalence(self):
+        """Test that tuple dual indices produce same NLL as dense tensor."""
+        N, J, K = 150, 3, 2
+        X, y_single, y_dual, true_beta = simulate_data(N, J, K, seed=42)
+        model = MultichoiceLogit(J, K)
+
+        flat_beta = true_beta.flatten()
+        dense_nll = model.neg_log_likelihood(flat_beta, X, y_single, y_dual)
+
+        rows, s_idx, t_idx = np.nonzero(y_dual)
+        tuple_input = (rows, s_idx, t_idx)
+        tuple_nll = model.neg_log_likelihood(flat_beta, X, y_single, tuple_input)
+
+        assert np.isclose(dense_nll, tuple_nll)
+
 
 class TestGradient:
     """Test gradient computation."""
@@ -285,6 +330,20 @@ class TestGradient:
 
         # Should still be close even with clipped probabilities
         assert np.allclose(grad, numerical_grad, atol=1e-4)
+
+    def test_gradient_sparse_dual(self):
+        """Gradient with tuple dual input matches dense gradient."""
+        N, J, K = 40, 3, 2
+        X, y_single, y_dual, true_beta = simulate_data(N, J, K, mix_ratio=0.3, seed=42)
+        model = MultichoiceLogit(J, K)
+
+        flat_beta = true_beta.flatten()
+        dense_grad = model.gradient(flat_beta, X, y_single, y_dual)
+
+        dual_rows, dual_s, dual_t = np.nonzero(y_dual)
+        tuple_grad = model.gradient(flat_beta, X, y_single, (dual_rows, dual_s, dual_t))
+
+        assert np.allclose(dense_grad, tuple_grad)
 
 
 class TestComputeStandardErrors:
@@ -468,3 +527,53 @@ class TestEndToEndEstimation:
         # Mean absolute error should be reasonably small
         mae = np.mean(np.abs(est_beta - true_beta))
         assert mae < 0.15  # Reasonable tolerance for N=1000
+
+
+class TestHelpers:
+    """Tests for helper APIs such as predict_proba and log_likelihood_contributions."""
+
+    def test_predict_proba_shapes_and_sums(self):
+        N, J, K = 50, 3, 2
+        X, y_single, y_dual, true_beta = simulate_data(N, J, K, seed=42)
+        model = MultichoiceLogit(J, K)
+
+        flat_beta = true_beta.flatten()
+        single_probs, dual_probs = model.predict_proba(X, flat_beta=flat_beta)
+
+        assert single_probs.shape == (N, J)
+        assert dual_probs.shape == (N, J, J)
+        # Single probabilities should sum to 1
+        np.testing.assert_allclose(np.sum(single_probs, axis=1), 1.0, atol=1e-6)
+        # Dual probabilities upper triangle should be non-negative
+        assert np.all(
+            dual_probs[:, np.triu_indices(J, k=1)[0], np.triu_indices(J, k=1)[1]] >= 0
+        )
+
+    def test_log_likelihood_contributions_sum(self):
+        N, J, K = 80, 3, 2
+        X, y_single, y_dual, true_beta = simulate_data(N, J, K, seed=42)
+        model = MultichoiceLogit(J, K)
+        flat_beta = true_beta.flatten()
+
+        contributions = model.log_likelihood_contributions(
+            flat_beta, X, y_single, y_dual
+        )
+        total = np.sum(contributions)
+        direct = -model.neg_log_likelihood(flat_beta, X, y_single, y_dual)
+
+        assert contributions.shape == (N,)
+        np.testing.assert_allclose(total, direct, rtol=1e-6, atol=1e-6)
+
+    def test_compute_standard_errors_custom_epsilon(self):
+        N, J, K = 60, 3, 2
+        X, y_single, y_dual, true_beta = simulate_data(N, J, K, seed=42)
+        model = MultichoiceLogit(J, K)
+
+        flat_beta = true_beta.flatten()
+        std_errs_default = model.compute_standard_errors(flat_beta, X, y_single, y_dual)
+        std_errs_smaller = model.compute_standard_errors(
+            flat_beta, X, y_single, y_dual, epsilon=1e-6
+        )
+
+        assert std_errs_default.shape == std_errs_smaller.shape == ((J - 1) * K,)
+        assert np.all(np.isfinite(std_errs_default))

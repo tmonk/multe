@@ -6,6 +6,8 @@ for multichoice logit models where agents can select single alternatives or pair
 Fully vectorized implementation for fast simulation.
 """
 
+from __future__ import annotations
+
 from typing import Optional, Tuple
 import numpy as np
 import numpy.typing as npt
@@ -17,7 +19,9 @@ def simulate_data(
     K: int,
     true_beta: Optional[npt.NDArray[np.float64]] = None,
     mix_ratio: float = 0.5,
-    seed: int = 42,
+    seed: int | None = 42,
+    rng: np.random.Generator | None = None,
+    dtype: npt.DTypeLike = np.float64,
 ) -> Tuple[
     npt.NDArray[np.float64],
     npt.NDArray[np.int8],
@@ -42,7 +46,9 @@ def simulate_data(
                                          If None, generated uniformly in [-1, 1].
         mix_ratio (float): Fraction of population making single choices (0.0 to 1.0).
                           Default is 0.5 (equal mix of single and dual choices).
-        seed (int): Random seed for reproducibility. Default is 42.
+        seed (int | None): Random seed for reproducibility. Ignored if rng is provided.
+        rng (np.random.Generator, optional): Use an existing RNG instead of seed.
+        dtype: dtype for generated covariates and parameters (default float64).
 
     Returns:
         tuple: (X, y_single, y_dual, true_beta_free)
@@ -53,6 +59,7 @@ def simulate_data(
 
     Raises:
         ValueError: If N, J, or K are invalid, or if mix_ratio is not in [0, 1].
+        ValueError: If true_beta has an incorrect shape.
     """
     if N < 1:
         raise ValueError(f"N must be >= 1, got {N}")
@@ -64,22 +71,22 @@ def simulate_data(
         raise ValueError(f"mix_ratio must be in [0, 1], got {mix_ratio}")
     if true_beta is not None and true_beta.shape != (J - 1, K):
         raise ValueError(
-            f"true_beta must have shape ({J-1}, {K}), got {true_beta.shape}"
+            f"true_beta must have shape ({J - 1}, {K}), got {true_beta.shape}"
         )
 
-    rng = np.random.default_rng(seed)
+    rng = rng or np.random.default_rng(seed)
 
     # Generate covariates
-    X = rng.normal(size=(N, K))
+    X = rng.normal(size=(N, K)).astype(dtype, copy=False)
 
     # Generate or Use Parameters
     if true_beta is None:
-        true_beta_free = rng.uniform(-1, 1, (J-1, K))
+        true_beta_free = rng.uniform(-1, 1, (J - 1, K)).astype(dtype, copy=False)
     else:
-        true_beta_free = true_beta
+        true_beta_free = true_beta.astype(dtype, copy=False)
 
     # Add fixed class 0 (identification constraint)
-    beta_full = np.vstack([np.zeros((1, K)), true_beta_free])
+    beta_full = np.vstack([np.zeros((1, K), dtype=dtype), true_beta_free])
 
     # Calculate Deterministic Utility
     V = X @ beta_full.T
@@ -97,8 +104,12 @@ def simulate_data(
     top_k_values = np.take_along_axis(U, top_k_indices, axis=1)
     sorted_within_top = np.argsort(top_k_values, axis=1)
 
-    best_idx = np.take_along_axis(top_k_indices, sorted_within_top[:, -1:], axis=1).flatten()
-    second_best_idx = np.take_along_axis(top_k_indices, sorted_within_top[:, -2:-1], axis=1).flatten()
+    best_idx = np.take_along_axis(
+        top_k_indices, sorted_within_top[:, -1:], axis=1
+    ).flatten()
+    second_best_idx = np.take_along_axis(
+        top_k_indices, sorted_within_top[:, -2:-1], axis=1
+    ).flatten()
 
     # Randomly assign choice mode (single vs dual) based on mix_ratio
     mode_choice = rng.binomial(1, mix_ratio, N).astype(bool)
@@ -121,7 +132,10 @@ def simulate_data(
 
         # Ensure s < t (swap if needed)
         swap_mask = s_indices > t_indices
-        s_indices[swap_mask], t_indices[swap_mask] = t_indices[swap_mask], s_indices[swap_mask]
+        s_indices[swap_mask], t_indices[swap_mask] = (
+            t_indices[swap_mask],
+            s_indices[swap_mask],
+        )
 
         y_dual[row_indices_dual, s_indices, t_indices] = 1
 
