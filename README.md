@@ -3,6 +3,7 @@
 [![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Tests](https://github.com/tmonk/multe/actions/workflows/tests.yml/badge.svg)](https://github.com/tmonk/multe/actions/workflows/tests.yml)
+[![PyPI version](https://img.shields.io/pypi/v/multe)](https://pypi.org/project/multe/)
 
 A Python library for estimating discrete choice models where agents can select either single alternatives or unordered pairs of alternatives.
 
