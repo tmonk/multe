@@ -40,7 +40,7 @@ Repository = "https://github.com/tmonk/multe"
 Documentation = "https://github.com/tmonk/multe#readme"
 
 [build-system]
-requires = ["hatchling", "hatchling_vcs"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
