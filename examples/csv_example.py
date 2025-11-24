@@ -26,6 +26,7 @@ def save_data_to_csv(X, y_single, y_dual, filepath_prefix="data"):
         filepath_prefix: Prefix for output files
     """
     N, K = X.shape
+
     # Save covariates
     covariate_df = pd.DataFrame(X, columns=[f"x_{k}" for k in range(K)])
     covariate_df.to_csv(f"{filepath_prefix}_covariates.csv", index=False)
@@ -145,11 +146,14 @@ def main():
     model = MultichoiceLogit(J, K)
     init_beta = np.zeros((J - 1) * K)
 
+    single_idx, dual_idx = model._validate_data(
+        X_loaded, y_single_loaded, y_dual_loaded
+    )
+
     result = minimize(
-        fun=model.neg_log_likelihood,
-        jac=model.gradient,
+        fun=lambda b: model._neg_log_likelihood(b, X_loaded, single_idx, dual_idx),
+        jac=lambda b: model._gradient(b, X_loaded, single_idx, dual_idx),
         x0=init_beta,
-        args=(X_loaded, y_single_loaded, y_dual_loaded),
         method="BFGS",
         options={"disp": False, "gtol": 1e-5},
     )
@@ -179,7 +183,7 @@ def main():
     # Step 6: Compute standard errors
     print("\n6. Computing standard errors...")
     std_errs = model.compute_standard_errors(
-        result.x, X_loaded, y_single_loaded, y_dual_loaded
+        X_loaded, y_single_loaded, y_dual_loaded, result.x
     )
     std_errs_reshaped = std_errs.reshape(J - 1, K)
 
@@ -206,7 +210,7 @@ def main():
         os.remove("example_data_covariates.csv")
         os.remove("example_data_choices.csv")
         print("\nTemporary CSV files cleaned up.")
-    except OSError:
+    except FileNotFoundError:
         pass
 
 

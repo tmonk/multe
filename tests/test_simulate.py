@@ -135,6 +135,20 @@ class TestSimulateDataOutput:
         assert np.all(y_dual1 == y_dual2)
         assert np.allclose(beta1, beta2)
 
+    def test_rng_argument_reproducibility(self):
+        """Test that supplying rng yields reproducible draws independent of seed."""
+        N, J, K = 50, 3, 2
+        rng1 = np.random.default_rng(123)
+        rng2 = np.random.default_rng(123)
+
+        X1, y_single1, y_dual1, beta1 = simulate_data(N, J, K, rng=rng1, seed=None)
+        X2, y_single2, y_dual2, beta2 = simulate_data(N, J, K, rng=rng2, seed=None)
+
+        assert np.allclose(X1, X2)
+        assert np.all(y_single1 == y_single2)
+        assert np.all(y_dual1 == y_dual2)
+        assert np.allclose(beta1, beta2)
+
     def test_different_seeds_different_results(self):
         """Test that different seeds produce different results."""
         N, J, K = 100, 3, 2
@@ -148,6 +162,14 @@ class TestSimulateDataOutput:
             and np.all(y_single1 == y_single2)
             and np.all(y_dual1 == y_dual2)
         )
+
+    def test_dtype_control(self):
+        """Test that dtype parameter controls output dtype."""
+        N, J, K = 20, 3, 2
+        X, y_single, y_dual, beta = simulate_data(N, J, K, seed=42, dtype=np.float32)
+
+        assert X.dtype == np.float32
+        assert beta.dtype == np.float32
 
     def test_binary_outputs(self):
         """Test that y_single and y_dual contain only 0 and 1."""

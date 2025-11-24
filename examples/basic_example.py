@@ -30,11 +30,12 @@ def main():
     # Initial guess (zeros)
     init_beta = np.zeros((J - 1) * K)
 
+    single_idx, dual_idx = model._validate_data(X, y_single, y_dual)
+
     res = minimize(
-        fun=model.neg_log_likelihood,
-        jac=model.gradient,
+        fun=lambda b: model._neg_log_likelihood(b, X, single_idx, dual_idx),
+        jac=lambda b: model._gradient(b, X, single_idx, dual_idx),
         x0=init_beta,
-        args=(X, y_single, y_dual),
         method="L-BFGS-B",
         options={"disp": True, "gtol": 1e-5},
     )
@@ -43,7 +44,7 @@ def main():
 
     # Compute Standard Errors
     print("Computing Standard Errors...")
-    std_errs = model.compute_standard_errors(res.x, X, y_single, y_dual)
+    std_errs = model.compute_standard_errors(X, y_single, y_dual, res.x)
 
     est_beta = res.x.reshape(J - 1, K)
     std_errs_reshaped = std_errs.reshape(J - 1, K)

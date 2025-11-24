@@ -9,6 +9,21 @@ A Python library for estimating discrete choice models where agents can select e
 
 This implements the model as described in Ophem, H.V., Stam, P. and Praag, B.V., 1999. [Multichoice Logit: Modeling Incomplete Preference Rankings of Classical Concerts](https://www.tandfonline.com/doi/abs/10.1080/07350015.1999.10524801). Journal of Business & Economic Statistics, 17(1), pp.117-128.
 
+Built by [Thomas Monk](https://tdmonk.com), London School of Economics.
+
+## Citation
+
+If you use this package, please cite it as:
+
+```
+@misc{monk2025multe,
+  author = {Thomas Monk},
+  title = {Multe: Multichoice Logit Estimation},
+  howpublished = {\url{https://github.com/tmonk/multe}},
+  year = {2025}
+}
+```
+
 ## Installation
 
 Install from PyPI:
@@ -100,9 +115,9 @@ Model class with methods:
 - **`fit(X, y_single, y_dual, method='L-BFGS-B')`** - Fit model using MLE (recommended)
   - Returns `self` with fitted `coef_` attribute
   - Stores optimization details in `optimization_result_`
-- `neg_log_likelihood(flat_beta, X, y_single, y_dual)` - Negative log-likelihood
-- `gradient(flat_beta, X, y_single, y_dual)` - Analytical gradient
-- `compute_standard_errors(flat_beta, X, y_single, y_dual)` - Standard errors
+- `compute_standard_errors(X, y_single, y_dual, flat_beta=None)` - Standard errors (uses fitted params by default)
+- `predict_proba(X, flat_beta=None)` - Single/dual choice probabilities
+- `log_likelihood_contributions(X, y_single, y_dual, flat_beta=None)` - Per-observation log-likelihoods
 
 ### simulate_data(N, J, K, true_beta=None, mix_ratio=0.5, seed=42)
 Generate synthetic data following the RUM framework.
