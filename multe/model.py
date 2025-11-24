@@ -4,9 +4,10 @@ Multichoice Logit Model
 Vectorized implementation for fast and accurate MLE estimation.
 """
 
-from typing import Tuple
+from typing import Tuple, Optional, Dict, Any
 import numpy as np
 import numpy.typing as npt
+from scipy.optimize import minimize, OptimizeResult
 
 
 class MultichoiceLogit:
@@ -16,6 +17,8 @@ class MultichoiceLogit:
     Attributes:
         J (int): Total number of alternatives available.
         K (int): Number of covariates (features) for each alternative.
+        coef_ (np.ndarray): Fitted coefficients of shape (J-1, K). Available after fit().
+        optimization_result_ (OptimizeResult): Full optimization result. Available after fit().
     """
 
     def __init__(self, num_alternatives: int, num_covariates: int) -> None:
@@ -36,6 +39,10 @@ class MultichoiceLogit:
 
         self.J = num_alternatives
         self.K = num_covariates
+
+        # Fitted attributes (set by fit method)
+        self.coef_: Optional[npt.NDArray[np.float64]] = None
+        self.optimization_result_: Optional[OptimizeResult] = None
 
     def transform_params(self, flat_beta: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         """
@@ -82,6 +89,85 @@ class MultichoiceLogit:
         V_stable = V - np.max(V, axis=1, keepdims=True)
         a = np.exp(V_stable)
         return V, a
+
+    def fit(
+        self,
+        X: npt.NDArray[np.float64],
+        y_single: npt.NDArray[np.int8],
+        y_dual: npt.NDArray[np.int8],
+        init_beta: Optional[npt.NDArray[np.float64]] = None,
+        method: str = "L-BFGS-B",
+        options: Optional[Dict[str, Any]] = None,
+    ) -> "MultichoiceLogit":
+        """
+        Fit the multichoice logit model using maximum likelihood estimation.
+
+        This is a convenience method that wraps scipy.optimize.minimize with sensible
+        defaults. For more control over optimization, you can call neg_log_likelihood
+        and gradient directly with your own optimizer.
+
+        Args:
+            X (np.ndarray): Covariate matrix of shape (N, K).
+            y_single (np.ndarray): Binary matrix (N, J). y_single[i, j] = 1 if i chose j alone.
+            y_dual (np.ndarray): Binary tensor (N, J, J). y_dual[i, s, t] = 1 if i chose pair {s, t}.
+            init_beta (np.ndarray, optional): Initial parameter values (flat array of size (J-1)*K).
+                                              If None, initializes to zeros.
+            method (str): Optimization method for scipy.optimize.minimize. Default is 'L-BFGS-B'.
+                         Other good options: 'BFGS', 'Newton-CG'.
+            options (dict, optional): Additional options to pass to the optimizer.
+                                     Default is {'gtol': 1e-5, 'maxiter': 1000, 'disp': False}.
+
+        Returns:
+            self: Returns the instance itself for method chaining.
+
+        Raises:
+            ValueError: If data dimensions are incompatible or constraints are violated.
+            RuntimeError: If optimization fails to converge.
+
+        Example:
+            >>> from multe import MultichoiceLogit, simulate_data
+            >>> X, y_single, y_dual, true_beta = simulate_data(N=1000, J=3, K=2)
+            >>> model = MultichoiceLogit(num_alternatives=3, num_covariates=2)
+            >>> model.fit(X, y_single, y_dual)
+            >>> print(model.coef_)  # Estimated coefficients
+        """
+        # Set default options
+        if options is None:
+            options = {"gtol": 1e-5, "maxiter": 1000, "disp": False}
+
+        # Initialize parameters
+        if init_beta is None:
+            init_beta = np.zeros((self.J - 1) * self.K)
+        else:
+            # Validate initial parameters
+            expected_size = (self.J - 1) * self.K
+            if init_beta.size != expected_size:
+                raise ValueError(
+                    f"init_beta must have size {expected_size}, got {init_beta.size}"
+                )
+
+        # Run optimization
+        result = minimize(
+            fun=self.neg_log_likelihood,
+            jac=self.gradient,
+            x0=init_beta,
+            args=(X, y_single, y_dual),
+            method=method,
+            options=options,
+        )
+
+        # Check convergence
+        if not result.success:
+            raise RuntimeError(
+                f"Optimization failed to converge: {result.message}\n"
+                f"Try a different optimization method or adjust tolerance."
+            )
+
+        # Store results
+        self.coef_ = result.x.reshape(self.J - 1, self.K)
+        self.optimization_result_ = result
+
+        return self
 
     def _validate_data(
         self,

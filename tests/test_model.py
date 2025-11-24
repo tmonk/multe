@@ -266,6 +266,119 @@ class TestComputeStandardErrors:
         assert std_errs.shape == ((J - 1) * K,)
 
 
+class TestFitMethod:
+    """Test the fit() convenience method."""
+
+    def test_fit_basic(self):
+        """Test that fit() works and sets attributes correctly."""
+        N, J, K = 500, 3, 2
+        X, y_single, y_dual, true_beta = simulate_data(N, J, K, seed=42)
+        model = MultichoiceLogit(J, K)
+
+        # Initially, coef_ should be None
+        assert model.coef_ is None
+        assert model.optimization_result_ is None
+
+        # Fit the model
+        result = model.fit(X, y_single, y_dual)
+
+        # Should return self
+        assert result is model
+
+        # Attributes should be set
+        assert model.coef_ is not None
+        assert model.optimization_result_ is not None
+        assert model.coef_.shape == (J - 1, K)
+
+    def test_fit_recovers_parameters(self):
+        """Test that fit() recovers parameters reasonably well."""
+        N, J, K = 1000, 3, 2
+        X, y_single, y_dual, true_beta = simulate_data(N, J, K, seed=42)
+        model = MultichoiceLogit(J, K)
+
+        model.fit(X, y_single, y_dual)
+
+        # Mean absolute error should be reasonably small
+        mae = np.mean(np.abs(model.coef_ - true_beta))
+        assert mae < 0.15
+
+    def test_fit_with_custom_init(self):
+        """Test fit() with custom initial parameters."""
+        N, J, K = 200, 3, 2
+        X, y_single, y_dual, true_beta = simulate_data(N, J, K, seed=42)
+        model = MultichoiceLogit(J, K)
+
+        # Custom initial values
+        init_beta = np.random.randn((J - 1) * K) * 0.1
+
+        model.fit(X, y_single, y_dual, init_beta=init_beta)
+
+        assert model.coef_ is not None
+        assert model.coef_.shape == (J - 1, K)
+
+    def test_fit_with_invalid_init_shape(self):
+        """Test that invalid init_beta shape raises ValueError."""
+        N, J, K = 100, 3, 2
+        X, y_single, y_dual, _ = simulate_data(N, J, K, seed=42)
+        model = MultichoiceLogit(J, K)
+
+        init_beta_wrong = np.random.randn(10)  # Wrong size
+
+        with pytest.raises(ValueError, match="init_beta must have size"):
+            model.fit(X, y_single, y_dual, init_beta=init_beta_wrong)
+
+    def test_fit_with_different_methods(self):
+        """Test fit() with different optimization methods."""
+        N, J, K = 200, 3, 2
+        X, y_single, y_dual, _ = simulate_data(N, J, K, seed=42)
+
+        for method in ["BFGS", "L-BFGS-B"]:
+            model = MultichoiceLogit(J, K)
+            model.fit(X, y_single, y_dual, method=method)
+
+            assert model.coef_ is not None
+            assert model.optimization_result_.success
+
+    def test_fit_with_custom_options(self):
+        """Test fit() with custom optimizer options."""
+        N, J, K = 200, 3, 2
+        X, y_single, y_dual, _ = simulate_data(N, J, K, seed=42)
+        model = MultichoiceLogit(J, K)
+
+        custom_options = {"gtol": 1e-4, "maxiter": 500}
+        model.fit(X, y_single, y_dual, options=custom_options)
+
+        assert model.coef_ is not None
+        assert model.optimization_result_ is not None
+
+    def test_fit_method_chaining(self):
+        """Test that fit() supports method chaining."""
+        N, J, K = 200, 3, 2
+        X, y_single, y_dual, _ = simulate_data(N, J, K, seed=42)
+
+        model = MultichoiceLogit(J, K).fit(X, y_single, y_dual)
+
+        assert model.coef_ is not None
+        assert model.coef_.shape == (J - 1, K)
+
+    def test_fit_optimization_result_attributes(self):
+        """Test that optimization_result_ contains expected attributes."""
+        N, J, K = 200, 3, 2
+        X, y_single, y_dual, _ = simulate_data(N, J, K, seed=42)
+        model = MultichoiceLogit(J, K)
+
+        model.fit(X, y_single, y_dual)
+
+        result = model.optimization_result_
+
+        # Check expected attributes
+        assert hasattr(result, "success")
+        assert hasattr(result, "fun")  # Final negative log-likelihood
+        assert hasattr(result, "nit")  # Number of iterations
+        assert hasattr(result, "nfev")  # Number of function evaluations
+        assert result.success is True
+
+
 class TestEndToEndEstimation:
     """Test end-to-end estimation workflow."""
 
