@@ -44,10 +44,9 @@ def benchmark_estimation(N, J, K, mix_ratio=0.5, method="BFGS", seed=42):
     # Optimize
     t0 = time.time()
     result = minimize(
-        fun=model.neg_log_likelihood,
-        jac=model.gradient,
+        fun=lambda b: model._neg_log_likelihood(b, X, single_idx, dual_idx),
+        jac=lambda b: model._gradient(b, X, single_idx, dual_idx),
         x0=init_beta,
-        args=(X, y_single, y_dual),
         method=method,
         options={"disp": False, "gtol": 1e-5, "maxiter": 1000},
     )

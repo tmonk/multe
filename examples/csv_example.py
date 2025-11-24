@@ -145,11 +145,14 @@ def main():
     model = MultichoiceLogit(J, K)
     init_beta = np.zeros((J - 1) * K)
 
+    single_idx, dual_idx = model._validate_data(
+        X_loaded, y_single_loaded, y_dual_loaded
+    )
+
     result = minimize(
-        fun=model.neg_log_likelihood,
-        jac=model.gradient,
+        fun=lambda b: model._neg_log_likelihood(b, X_loaded, single_idx, dual_idx),
+        jac=lambda b: model._gradient(b, X_loaded, single_idx, dual_idx),
         x0=init_beta,
-        args=(X_loaded, y_single_loaded, y_dual_loaded),
         method="BFGS",
         options={"disp": False, "gtol": 1e-5},
     )

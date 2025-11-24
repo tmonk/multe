@@ -32,7 +32,7 @@ class TestTransformParams:
         """Test that transform_params produces correct shape."""
         model = MultichoiceLogit(num_alternatives=4, num_covariates=3)
         flat_beta = np.random.randn((4 - 1) * 3)
-        beta = model.transform_params(flat_beta)
+        beta = model._transform_params(flat_beta)
 
         assert beta.shape == (4, 3)
         assert np.allclose(beta[0], 0)  # First row should be zeros
@@ -43,7 +43,7 @@ class TestTransformParams:
         flat_beta = np.random.randn(10)  # Wrong size
 
         with pytest.raises(ValueError, match="flat_beta must have size"):
-            model.transform_params(flat_beta)
+            model._transform_params(flat_beta)
 
 
 class TestDataValidation:
@@ -175,7 +175,8 @@ class TestNegLogLikelihood:
         model = MultichoiceLogit(J, K)
 
         flat_beta = true_beta.flatten()
-        nll = model.neg_log_likelihood(flat_beta, X, y_single, y_dual)
+        single_idx, dual_idx = model._validate_data(X, y_single, y_dual)
+        nll = model._neg_log_likelihood(flat_beta, X, single_idx, dual_idx)
 
         assert isinstance(nll, (float, np.floating))
 
@@ -186,7 +187,8 @@ class TestNegLogLikelihood:
         model = MultichoiceLogit(J, K)
 
         flat_beta = true_beta.flatten()
-        nll = model.neg_log_likelihood(flat_beta, X, y_single, y_dual)
+        single_idx, dual_idx = model._validate_data(X, y_single, y_dual)
+        nll = model._neg_log_likelihood(flat_beta, X, single_idx, dual_idx)
 
         assert nll > 0
 
@@ -197,7 +199,8 @@ class TestNegLogLikelihood:
         model = MultichoiceLogit(J, K)
 
         flat_beta = true_beta.flatten()
-        nll = model.neg_log_likelihood(flat_beta, X, y_single, y_dual)
+        single_idx, dual_idx = model._validate_data(X, y_single, y_dual)
+        nll = model._neg_log_likelihood(flat_beta, X, single_idx, dual_idx)
 
         assert nll > 0
         assert np.sum(y_dual) == 0  # Verify no dual choices
@@ -209,7 +212,8 @@ class TestNegLogLikelihood:
         model = MultichoiceLogit(J, K)
 
         flat_beta = true_beta.flatten()
-        nll = model.neg_log_likelihood(flat_beta, X, y_single, y_dual)
+        single_idx, dual_idx = model._validate_data(X, y_single, y_dual)
+        nll = model._neg_log_likelihood(flat_beta, X, single_idx, dual_idx)
 
         assert nll > 0
         assert np.sum(y_single) == 0  # Verify no single choices
@@ -232,13 +236,13 @@ class TestNegLogLikelihood:
         flat_beta = large_beta.flatten()
 
         # Should not overflow or produce inf/nan
-        nll = model.neg_log_likelihood(flat_beta, X, y_single, y_dual)
+        single_idx, dual_idx = model._validate_data(X, y_single, y_dual)
+        nll = model._neg_log_likelihood(flat_beta, X, single_idx, dual_idx)
 
         assert np.isfinite(nll)
         assert nll > 0
 
         # Gradient should also be stable
-        single_idx, dual_idx = model._validate_data(X, y_single, y_dual)
         grad = model._gradient(flat_beta, X, single_idx, dual_idx)
         assert np.all(np.isfinite(grad))
 
@@ -249,11 +253,13 @@ class TestNegLogLikelihood:
         model = MultichoiceLogit(J, K)
 
         flat_beta = true_beta.flatten()
-        dense_nll = model.neg_log_likelihood(flat_beta, X, y_single, y_dual)
+        single_dense, dual_dense = model._validate_data(X, y_single, y_dual)
+        dense_nll = model._neg_log_likelihood(flat_beta, X, single_dense, dual_dense)
 
         rows, s_idx, t_idx = np.nonzero(y_dual)
         tuple_input = (rows, s_idx, t_idx)
-        tuple_nll = model.neg_log_likelihood(flat_beta, X, y_single, tuple_input)
+        single_tuple, dual_tuple = model._validate_data(X, y_single, tuple_input)
+        tuple_nll = model._neg_log_likelihood(flat_beta, X, single_tuple, dual_tuple)
 
         assert np.isclose(dense_nll, tuple_nll)
 
@@ -573,7 +579,8 @@ class TestHelpers:
             X, y_single, y_dual, flat_beta
         )
         total = np.sum(contributions)
-        direct = -model.neg_log_likelihood(flat_beta, X, y_single, y_dual)
+        single_idx, dual_idx = model._validate_data(X, y_single, y_dual)
+        direct = -model._neg_log_likelihood(flat_beta, X, single_idx, dual_idx)
 
         assert contributions.shape == (N,)
         np.testing.assert_allclose(total, direct, rtol=1e-6, atol=1e-6)

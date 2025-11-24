@@ -115,7 +115,6 @@ Model class with methods:
 - **`fit(X, y_single, y_dual, method='L-BFGS-B')`** - Fit model using MLE (recommended)
   - Returns `self` with fitted `coef_` attribute
   - Stores optimization details in `optimization_result_`
-- `neg_log_likelihood(flat_beta, X, y_single, y_dual)` - Negative log-likelihood
 - `compute_standard_errors(X, y_single, y_dual, flat_beta=None)` - Standard errors (uses fitted params by default)
 - `predict_proba(X, flat_beta=None)` - Single/dual choice probabilities
 - `log_likelihood_contributions(X, y_single, y_dual, flat_beta=None)` - Per-observation log-likelihoods
