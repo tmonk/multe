@@ -101,13 +101,6 @@ class MultichoiceLogit:
         beta_fixed = np.zeros((1, self.K))
         return np.vstack([beta_fixed, beta_free])
 
-    # Public alias for compatibility
-    def transform_params(
-        self, flat_beta: npt.NDArray[np.float64]
-    ) -> npt.NDArray[np.float64]:
-        """Public wrapper for parameter reshaping (kept for compatibility)."""
-        return self._transform_params(flat_beta)
-
     def _calculate_utilities(
         self, X: npt.NDArray[np.float64], beta: npt.NDArray[np.float64]
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
@@ -129,13 +122,6 @@ class MultichoiceLogit:
         V_stable = V - np.max(V, axis=1, keepdims=True)
         a = np.exp(V_stable)
         return V, a
-
-    # Public alias for compatibility
-    def calculate_utilities(
-        self, X: npt.NDArray[np.float64], beta: npt.NDArray[np.float64]
-    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
-        """Public wrapper for utility calculation (kept for compatibility)."""
-        return self._calculate_utilities(X, beta)
 
     def _normalize_dual_indices(
         self, y_dual: DualInput, *, N: int, J: int
@@ -435,19 +421,6 @@ class MultichoiceLogit:
 
         return -log_lik
 
-    def neg_log_likelihood(
-        self,
-        flat_beta: npt.NDArray[np.float64],
-        X: npt.NDArray[np.float64],
-        y_single: npt.NDArray[np.int8],
-        y_dual: DualInput,
-    ) -> float:
-        """
-        Public wrapper: compute negative log-likelihood with on-the-fly indices.
-        """
-        single_indices, dual_indices = self._validate_data(X, y_single, y_dual)
-        return self._neg_log_likelihood(flat_beta, X, single_indices, dual_indices)
-
     def _gradient(
         self,
         flat_beta: npt.NDArray[np.float64],
@@ -475,6 +448,7 @@ class MultichoiceLogit:
             # Gradient = X * (y - p)
             # y is one-hot, so for chosen col y=1, else 0
             # Add positive term for chosen alternatives (y=1)
+            # Use np.add.at for sparse addition
             np.add.at(grad, col_idx, X_sub)
 
             # Subtract prob term for all alternatives
@@ -522,6 +496,7 @@ class MultichoiceLogit:
             # Complexity: O(n_dual) weight computations; still cheaper than looping over J.
 
             # For 'r' alternatives (neither s nor t): grad += sum_i (w_r_i * a_ij) * X_i
+            # But we must exclude j=s and j=t
             # 1. Compute M = w_r[:, None] * a[i_idx]   (Shape: n_dual, J)
             a_i = a[i_idx]  # (n_dual, J)
             M = w_r[:, np.newaxis] * a_i
@@ -536,6 +511,8 @@ class MultichoiceLogit:
             grad += M.T @ X_i
 
             # 4. Add contributions from s and t (O(n_dual))
+            # grad[s] += sum(w_s * X_i)
+            # grad[t] += sum(w_t * X_i)
             grad_contrib_s = w_s[:, np.newaxis] * X_i  # (n_dual, K)
             grad_contrib_t = w_t[:, np.newaxis] * X_i  # (n_dual, K)
 
