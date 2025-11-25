@@ -7,7 +7,6 @@ Tests speed and accuracy across different problem sizes and optimization methods
 import time
 
 import numpy as np
-from scipy.optimize import minimize
 
 from multe import MultichoiceLogit, simulate_data
 
@@ -43,19 +42,25 @@ def benchmark_estimation(N, J, K, mix_ratio=0.5, method="BFGS", seed=42):
     _ = model._gradient(init_beta, X, single_idx, dual_idx)
     gradient_time = time.time() - t0
 
-    # Optimize
+    # Optimize using public API
     t0 = time.time()
-    result = minimize(
-        fun=lambda b: model._neg_log_likelihood(b, X, single_idx, dual_idx),
-        jac=lambda b: model._gradient(b, X, single_idx, dual_idx),
-        x0=init_beta,
+    options = {"disp": False, "gtol": 1e-5, "maxiter": 1000}
+    if method == "Newton-CG":
+        # Newton-CG uses "xtol" for convergence; remove gtol to avoid warnings.
+        options = {"disp": False, "xtol": 1e-5, "maxiter": 1000}
+
+    model.fit_matrix(
+        X,
+        y_single=y_single,
+        y_dual=y_dual,
+        init_beta=init_beta,
         method=method,
-        options={"disp": False, "gtol": 1e-5, "maxiter": 1000},
+        options=options,
     )
     opt_time = time.time() - t0
 
     # Compute accuracy
-    est_beta = result.x.reshape(J - 1, K)
+    est_beta = model.coef_.reshape(J - 1, K)
     mae = np.mean(np.abs(est_beta - true_beta))
     rmse = np.sqrt(np.mean((est_beta - true_beta) ** 2))
     max_error = np.max(np.abs(est_beta - true_beta))
@@ -63,8 +68,10 @@ def benchmark_estimation(N, J, K, mix_ratio=0.5, method="BFGS", seed=42):
     # Compute standard errors
     t0 = time.time()
     # Compute standard errors (runtime tracked, values unused in benchmark output)
-    _ = model.compute_standard_errors(X, y_single, y_dual, flat_beta=result.x)
+    _ = model.compute_standard_errors(X, y_single, y_dual)
     se_time = time.time() - t0
+
+    opt_res = model.optimization_result_
 
     return {
         "N": N,
@@ -77,10 +84,10 @@ def benchmark_estimation(N, J, K, mix_ratio=0.5, method="BFGS", seed=42):
         "opt_time": opt_time,
         "se_time": se_time,
         "total_time": sim_time + opt_time + se_time,
-        "success": result.success,
-        "nit": result.nit,
-        "nfev": result.nfev,
-        "final_nll": result.fun,
+        "success": opt_res.success if opt_res is not None else False,
+        "nit": getattr(opt_res, "nit", None),
+        "nfev": getattr(opt_res, "nfev", None),
+        "final_nll": getattr(opt_res, "fun", None),
         "mae": mae,
         "rmse": rmse,
         "max_error": max_error,

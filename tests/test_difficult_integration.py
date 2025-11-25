@@ -25,7 +25,7 @@ class TestDifficultIntegration:
 
         model = MultichoiceLogit(J, K)
         # This should run without error due to pinv usage, though coefficients are unidentified
-        model.fit(X, y_single, y_dual)
+        model.fit_matrix(X, y_single, y_dual)
 
         # Should run without error due to pinv usage
         # Note: We don't strictly expect a warning here because pinv finds a minimum norm solution
@@ -48,7 +48,7 @@ class TestDifficultIntegration:
         X[:, 1] = X[:, 0] + np.random.normal(0, 1e-6, N)
 
         model = MultichoiceLogit(J, K)
-        model.fit(X, y_single, y_dual)
+        model.fit_matrix(X, y_single, y_dual)
 
         # Should converge successfully
         assert model.optimization_result_.success
@@ -74,7 +74,7 @@ class TestDifficultIntegration:
                 y_single[i, 2] = 1
 
         model = MultichoiceLogit(J, K)
-        model.fit(X, y_single, y_dual)
+        model.fit_matrix(X, y_single, y_dual)
 
         assert model.optimization_result_.success
 
@@ -94,7 +94,7 @@ class TestDifficultIntegration:
         X, y_single, y_dual, _ = simulate_data(N, J, K, seed=42)
 
         model = MultichoiceLogit(J, K)
-        model.fit(X, y_single, y_dual)
+        model.fit_matrix(X, y_single, y_dual)
 
         assert model.coef_ is not None
         # Likely warns on SE calculation
@@ -116,7 +116,7 @@ class TestDifficultIntegration:
         X, y_single, y_dual, _ = simulate_data(N, J, K, seed=42)
 
         model = MultichoiceLogit(J, K)
-        model.fit(X, y_single, y_dual)
+        model.fit_matrix(X, y_single, y_dual)
 
         assert model.coef_ is not None
         assert model.optimization_result_.success
@@ -134,7 +134,7 @@ class TestDifficultIntegration:
         X, y_single, y_dual, _ = simulate_data(N, J, K, seed=42)
 
         model = MultichoiceLogit(J, K)
-        model.fit(X, y_single, y_dual)
+        model.fit_matrix(X, y_single, y_dual)
 
         assert model.coef_ is not None
         assert model.optimization_result_.success
@@ -150,7 +150,7 @@ class TestDifficultIntegration:
         assert np.sum(y_dual) == N
 
         model = MultichoiceLogit(J, K)
-        model.fit(X, y_single, y_dual)
+        model.fit_matrix(X, y_single, y_dual)
         assert model.optimization_result_.success
 
     def test_no_dual_choices(self):
@@ -164,5 +164,5 @@ class TestDifficultIntegration:
         assert np.sum(y_single) == N
 
         model = MultichoiceLogit(J, K)
-        model.fit(X, y_single, y_dual)
+        model.fit_matrix(X, y_single, y_dual)
         assert model.optimization_result_.success

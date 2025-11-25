@@ -11,9 +11,13 @@ def main() -> None:
     # Simulate data and get choices list directly
     X, choices, true_beta = simulate_choices(N=10000, J=4, K=2, seed=42)
 
-    # Fit with the convenience wrapper
+    # - X: (N, K) covariate matrix.
+    # - choices: length‑N list of choices (each element is an int for single or a (s, t) tuple for a dual).
+    # - true_beta: (J-1, K) true coefficients (first alternative fixed to zero for identification).
+
+    # Fit with the choices-first entrypoint
     model = MultichoiceLogit(num_alternatives=4, num_covariates=2)
-    model.fit_choices(X, choices)
+    model.fit(X, choices)
 
     # Optionally compute standard errors
     y_single, y_dual = parse_choices(choices, J=4)

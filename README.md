@@ -41,25 +41,31 @@ pip install -e .
 ## Quick Start
 
 ```python
-from multe import MultichoiceLogit, parse_choices, simulate_choices, simulate_data
+from multe import MultichoiceLogit, simulate_choices
 
-# Matrix-first workflow
-X, y_single, y_dual, true_beta = simulate_data(N=1000, J=4, K=3, seed=42)
+# N: Number of observations
+# J: Number of alternatives
+# K: Number of covariates
+
+X, choices, true_beta = simulate_choices(N=1000, J=4, K=3, seed=123)
+
 model = MultichoiceLogit(num_alternatives=4, num_covariates=3)
-model.fit(X, y_single, y_dual)
-print(model.get_result().summary())
-
-# Choices-first workflow (easiest entry point)
-X2, choices, _ = simulate_choices(N=1000, J=4, K=3, seed=123)
-model.fit_choices(X2, choices)
-
-# Access matrices if you need them
-y_single2, y_dual2 = parse_choices(choices, J=4)
+result = model.fit(X, choices).get_result()
+print(result.summary())
 ```
 
-See `examples/quickstart.py` for a ready-to-run script, `examples/simple_fit_example.py` for a complete example, or `examples/basic_example.py` for advanced usage.
+See `examples/quickstart.py` for a ready-to-run script or `examples/matrix_example.py` for the matrix workflow and deeper walkthrough.
+
+## Data Format
+
+- `choices` (recommended): Length-N list of either `int` (single choice) or `(s, t)` tuples (dual choice, unordered).
+- `X`: Covariates of shape `(N, K)`.
+- Each agent must have exactly one choice entry.
+- Need matrices for another workflow? Jump to **Matrix inputs (y_single/y_dual)** below.
 
 ## Model
+
+The full model derivation is available [here](https://raw.githubusercontent.com/tmonk/multe/refs/heads/master/documentation/multichoice.pdf).
 
 Agents choose from J alternatives. The utility for agent i and alternative j is:
 
@@ -91,15 +97,6 @@ P(choose {s,t}) = P(U_s > max_k≠s U_k ∪ U_t > max_k≠t U_k)
 
 The model fixes beta_0 = 0 for identification, so it estimates (J-1) × K parameters.
 
-## Data Format
-
-- **X**: Covariates (N, K)
-- **Choices** (recommended): Length-N list of either `int` (single choice) or `(s, t)` tuples (dual choice). Convert to model-ready matrices with `parse_choices(choices, J)` or pass directly to `fit_choices`/`fit(..., choices=...)`.
-- **y_single**: Binary matrix (N, J) where `y_single[i,j]=1` if agent i chose alternative j
-- **y_dual**: Binary tensor (N, J, J) where `y_dual[i,s,t]=1` if agent i chose pair {s,t} with s<t. Sparse CSR (shape N × J², row-major flattening) and tuple index inputs `(rows, s, t)` are also supported if you build them yourself.
-
-Each agent must have exactly one choice (one entry in either y_single or y_dual).
-
 ## Performance
 
 Fully vectorized implementation for fast estimation and simulation:
@@ -112,28 +109,19 @@ Fully vectorized implementation for fast estimation and simulation:
 
 Run benchmarks: `python examples/benchmark.py`
 
-## API Reference
+## API Reference (choices-first)
 
 ### MultichoiceLogit(num_alternatives, num_covariates)
 Model class with methods:
-- **`fit(X, y_single=None, y_dual=None, choices=None, init_beta=None, method='L-BFGS-B', options=None, bounds=None, constraints=None, num_restarts=0, restart_scale=0.5, rng=None)`** – Fit via MLE. Provide either `choices` (ints/tuples) or both `y_single` and `y_dual`. Returns `self`, stores result in `optimization_result_`.
-- `fit_choices(X, choices, **kwargs)` – Convenience wrapper for the choices-first workflow.
+- **`fit(X, choices, **kwargs)`** – Fit via MLE using the choices-first workflow.
 - `get_result(standard_errors=None)` – Returns a `ModelResult` snapshot with `summary()` for quick inspection.
-- **`gradient(flat_beta, X, y_single, y_dual)`** – Public analytical gradient; accepts dense, sparse, or tuple dual inputs.
-- `compute_standard_errors(X, y_single, y_dual, flat_beta=None, epsilon=None)` – Numerical Hessian SEs (uses fitted params by default).
 - `predict_proba(X, flat_beta=None)` – Single/dual choice probabilities.
-- `log_likelihood_contributions(X, y_single, y_dual, flat_beta=None)` – Per-observation log-likelihoods.
 
 ### parse_choices(choices, J)
 Convert a list of choices (ints or `(s, t)` tuples) into `y_single, y_dual`.
 
 ### simulate_choices(N, J, K, true_beta=None, mix_ratio=0.5, seed=42, rng=None, dtype=np.float64)
 Generate synthetic data and return `(X, choices, true_beta)` in the choices-first format.
-
-### simulate_data(N, J, K, true_beta=None, mix_ratio=0.5, seed=42, rng=None, dtype=np.float64)
-Generate synthetic data following the RUM framework.
-
-Returns: `X, y_single, y_dual, true_beta`
 
 ## Interpreting the output
 
@@ -143,6 +131,33 @@ Example (immigration attitudes):
 - `alt1` = “less immigration”, `alt2` = “stay the same”, `alt3` = “more immigration”.
 - `k0` = non-EU migrant share, `k1` = unemployment rate.
 - A row `alt=1, k=0, coef=-0.26` means higher non-EU share is associated with lower likelihood of choosing “less immigration”. Each row reads the same way for every attitude option and predictor.
+
+## Matrix inputs (y_single/y_dual)
+
+The choices-first flow is easiest to use. If you already have matrices:
+- **y_single**: Binary matrix `(N, J)` where `y_single[i, j] = 1` if agent `i` chose alternative `j`.
+- **y_dual**: Binary tensor `(N, J, J)` where `y_dual[i, s, t] = 1` if agent `i` chose the unordered pair `{s, t}` with `s < t`. Sparse CSR (shape `N × J²`, row-major flattening) and tuple index inputs `(rows, s, t)` are also supported.
+- Convert from choices with `parse_choices(choices, J)`.
+
+Matrix workflow example:
+```python
+from multe import MultichoiceLogit, parse_choices, simulate_choices, simulate_data
+
+X, choices, _ = simulate_choices(N=1000, J=4, K=3, seed=42)
+y_single, y_dual = parse_choices(choices, J=4)
+# or X, y_single, y_dual, true_beta = simulate_data(N=1000, J=4, K=3, seed=42)
+
+model = MultichoiceLogit(num_alternatives=4, num_covariates=3)
+model.fit_matrix(X, y_single=y_single, y_dual=y_dual)
+```
+
+Matrix-focused utilities:
+- `parse_choices(choices, J)` – Convert a list of choices (ints or `(s, t)` tuples) into `y_single, y_dual`.
+- `simulate_data(N, J, K, true_beta=None, mix_ratio=0.5, seed=42, rng=None, dtype=np.float64)` – Generate synthetic data following the RUM framework and return `(X, y_single, y_dual, true_beta)`.
+- `fit_matrix(X, y_single, y_dual, **kwargs)` – Fit via MLE when you already have matrices.
+- `gradient(flat_beta, X, y_single, y_dual)` – Public analytical gradient; accepts dense, sparse, or tuple dual inputs.
+- `compute_standard_errors(X, y_single, y_dual, flat_beta=None, epsilon=None)` – Numerical Hessian standard errors (uses fitted params by default).
+- `log_likelihood_contributions(X, y_single, y_dual, flat_beta=None)` – Per-observation log-likelihoods.
 
 ## Acknowledgements
 

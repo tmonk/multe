@@ -231,12 +231,12 @@ class MultichoiceLogit:
     Attributes:
         J (int): Total number of alternatives available.
         K (int): Number of covariates (features) for each alternative.
-        coef_ (np.ndarray): Fitted coefficients of shape (J-1, K). Available after fit().
-        optimization_result_ (OptimizeResult): Full optimization result. Available after fit().
+        coef_ (np.ndarray): Fitted coefficients of shape (J-1, K). Available after fit()/fit_matrix().
+        optimization_result_ (OptimizeResult): Full optimization result. Available after fit()/fit_matrix().
 
     Example:
         >>> model = MultichoiceLogit(num_alternatives=3, num_covariates=2)
-        >>> model.fit(X, y_single, y_dual)
+        >>> model.fit(X, choices)
         >>> print(model.coef_)
     """
 
@@ -462,9 +462,7 @@ class MultichoiceLogit:
     def fit(
         self,
         X: npt.ArrayLike,
-        y_single: npt.NDArray[np.int8] | None = None,
-        y_dual: DualInput | None = None,
-        choices: Sequence[int | tuple[int, int]] | None = None,
+        choices: Sequence[int | tuple[int, int]],
         init_beta: npt.NDArray[np.float64] | None = None,
         method: str = "L-BFGS-B",
         options: dict[str, Any] | None = None,
@@ -475,7 +473,61 @@ class MultichoiceLogit:
         rng: np.random.Generator | None = None,
     ) -> MultichoiceLogit:
         """
-        Fit the multichoice logit model using maximum likelihood estimation.
+        Fit the multichoice logit model using the choices-first workflow.
+
+        Args:
+            X: Covariate matrix of shape (N, K).
+            choices: List of choices (int for single, tuple for dual).
+            init_beta: Initial parameter values, flat array of size (J-1)*K.
+                Defaults to zeros.
+            method: Optimization method for scipy.optimize.minimize.
+                Default 'L-BFGS-B'. Other options: 'BFGS', 'Newton-CG'.
+            options: Additional options for the optimizer.
+                Default: {'gtol': 1e-5, 'maxiter': 1000}.
+            bounds: Parameter bounds for scipy.optimize.minimize.
+            constraints: Constraints for scipy.optimize.minimize.
+            num_restarts: Number of random restarts beyond init_beta.
+            restart_scale: Standard deviation of normal noise for restart initialization.
+            rng: Random generator for restarts. Uses default_rng() if None.
+
+        Returns:
+            self: The fitted model instance (for method chaining).
+
+        Raises:
+            ValueError: If data dimensions are incompatible or constraints violated.
+            RuntimeError: If optimization fails to converge.
+        """
+        y_single, y_dual = parse_choices(choices, self.J)
+        return self.fit_matrix(
+            X=X,
+            y_single=y_single,
+            y_dual=y_dual,
+            init_beta=init_beta,
+            method=method,
+            options=options,
+            bounds=bounds,
+            constraints=constraints,
+            num_restarts=num_restarts,
+            restart_scale=restart_scale,
+            rng=rng,
+        )
+
+    def fit_matrix(
+        self,
+        X: npt.ArrayLike,
+        y_single: npt.NDArray[np.int8] | None = None,
+        y_dual: DualInput | None = None,
+        init_beta: npt.NDArray[np.float64] | None = None,
+        method: str = "L-BFGS-B",
+        options: dict[str, Any] | None = None,
+        bounds: Sequence[tuple[float | None, float | None]] | None = None,
+        constraints: Sequence[Any] | None = None,
+        num_restarts: int = 0,
+        restart_scale: float = 0.5,
+        rng: np.random.Generator | None = None,
+    ) -> MultichoiceLogit:
+        """
+        Fit the multichoice logit model using matrix inputs.
 
         Args:
             X: Covariate matrix of shape (N, K).
@@ -484,9 +536,6 @@ class MultichoiceLogit:
                 - Dense tensor (N, J, J) with y_dual[i, s, t] = 1 for pair {s, t}
                 - Sparse matrix (N, J*J) with row-major flattening
                 - Index triplet (rows, s, t)
-            choices: Optional list of choices (int for single, tuple for dual). If
-                provided, y_single/y_dual must be None and will be derived via
-                parse_choices.
             init_beta: Initial parameter values, flat array of size (J-1)*K.
                 Defaults to zeros.
             method: Optimization method for scipy.optimize.minimize.
@@ -509,17 +558,11 @@ class MultichoiceLogit:
         if options is None:
             options = {"gtol": 1e-5, "maxiter": 1000}
 
-        # Accept pandas objects for X and choices by converting to numpy
+        # Accept pandas objects for X by converting to numpy
         X = np.asarray(X, dtype=np.float64)
 
-        if choices is not None:
-            if y_single is not None or y_dual is not None:
-                raise ValueError(
-                    "Provide either 'choices' or 'y_single'/'y_dual', not both"
-                )
-            y_single, y_dual = parse_choices(choices, self.J)
-        elif y_single is None or y_dual is None:
-            raise ValueError("Provide either 'choices' or both 'y_single' and 'y_dual'")
+        if y_single is None or y_dual is None:
+            raise ValueError("Provide both 'y_single' and 'y_dual' for matrix fitting.")
 
         # Validate data and prepare indices once
         single_indices, dual_indices = self._validate_data(X, y_single, y_dual)
@@ -575,22 +618,13 @@ class MultichoiceLogit:
 
         return self
 
-    def fit_choices(
-        self,
-        X: npt.ArrayLike,
-        choices: Sequence[int | tuple[int, int]],
-        **kwargs: Any,
-    ) -> MultichoiceLogit:
-        """Convenience wrapper around fit() when supplying a choices list."""
-        return self.fit(X=X, choices=choices, **kwargs)
-
     def get_result(
         self,
         standard_errors: npt.NDArray[np.float64] | None = None,
     ) -> ModelResult:
         """Return a ModelResult snapshot of the fitted model."""
         if self.coef_ is None:
-            raise ValueError("Model is not fitted; call fit() first.")
+            raise ValueError("Model is not fitted; call fit() or fit_matrix() first.")
         return ModelResult(
             coef=self.coef_,
             standard_errors=standard_errors,
@@ -805,7 +839,7 @@ class MultichoiceLogit:
         if flat_beta is None:
             if self.coef_ is None:
                 raise ValueError(
-                    "Model is not fitted. Provide flat_beta or call fit() first."
+                    "Model is not fitted. Provide flat_beta or call fit() or fit_matrix() first."
                 )
             flat_beta = self.coef_.flatten()
 
@@ -872,7 +906,7 @@ class MultichoiceLogit:
         if flat_beta is None:
             if self.coef_ is None:
                 raise ValueError(
-                    "Model is not fitted. Provide flat_beta or call fit() first."
+                    "Model is not fitted. Provide flat_beta or call fit() or fit_matrix() first."
                 )
             flat_beta = self.coef_.flatten()
 
@@ -924,7 +958,7 @@ class MultichoiceLogit:
         if flat_beta is None:
             if self.coef_ is None:
                 raise ValueError(
-                    "Model is not fitted. Provide flat_beta or call fit() first."
+                    "Model is not fitted. Provide flat_beta or call fit() or fit_matrix() first."
                 )
             flat_beta = self.coef_.flatten()
 

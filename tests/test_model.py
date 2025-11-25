@@ -435,10 +435,10 @@ class TestComputeStandardErrors:
 
 
 class TestFitMethod:
-    """Test the fit() convenience method."""
+    """Test the fit() and fit_matrix() entrypoints."""
 
-    def test_fit_basic(self):
-        """Test that fit() works and sets attributes correctly."""
+    def test_fit_matrix_basic(self):
+        """Test that fit_matrix() works and sets attributes correctly."""
         N, J, K = 500, 3, 2
         X, y_single, y_dual, true_beta = simulate_data(N, J, K, seed=42)
         model = MultichoiceLogit(J, K)
@@ -448,7 +448,7 @@ class TestFitMethod:
         assert model.optimization_result_ is None
 
         # Fit the model
-        result = model.fit(X, y_single, y_dual)
+        result = model.fit_matrix(X, y_single, y_dual)
 
         # Should return self
         assert result is model
@@ -458,20 +458,20 @@ class TestFitMethod:
         assert model.optimization_result_ is not None
         assert model.coef_.shape == (J - 1, K)
 
-    def test_fit_recovers_parameters(self):
-        """Test that fit() recovers parameters reasonably well."""
+    def test_fit_matrix_recovers_parameters(self):
+        """Test that fit_matrix() recovers parameters reasonably well."""
         N, J, K = 1000, 3, 2
         X, y_single, y_dual, true_beta = simulate_data(N, J, K, seed=42)
         model = MultichoiceLogit(J, K)
 
-        model.fit(X, y_single, y_dual)
+        model.fit_matrix(X, y_single, y_dual)
 
         # Mean absolute error should be reasonably small
         mae = np.mean(np.abs(model.coef_ - true_beta))
         assert mae < 0.15
 
-    def test_fit_with_custom_init(self):
-        """Test fit() with custom initial parameters."""
+    def test_fit_matrix_with_custom_init(self):
+        """Test fit_matrix() with custom initial parameters."""
         N, J, K = 200, 3, 2
         X, y_single, y_dual, true_beta = simulate_data(N, J, K, seed=42)
         model = MultichoiceLogit(J, K)
@@ -479,36 +479,18 @@ class TestFitMethod:
         # Custom initial values
         init_beta = np.random.randn((J - 1) * K) * 0.1
 
-        model.fit(X, y_single, y_dual, init_beta=init_beta)
+        model.fit_matrix(X, y_single, y_dual, init_beta=init_beta)
 
         assert model.coef_ is not None
         assert model.coef_.shape == (J - 1, K)
 
-    def test_fit_with_choices_argument(self):
-        """Fit accepts choices list directly and rejects mixed inputs."""
-        N, J, K = 100, 3, 2
-        rng = np.random.default_rng(0)
-        X = rng.normal(size=(N, K))
-        # Build simple deterministic choices
-        choices = [0 if x[0] < 0 else (1, 2) for x in X]
-
-        model = MultichoiceLogit(J, K)
-        model.fit(X, choices=choices)
-
-        assert model.coef_ is not None
-
-        # Supplying both should error
-        y_single, y_dual = parse_choices(choices, J)
-        with pytest.raises(ValueError, match="either 'choices' or 'y_single'/'y_dual'"):
-            model.fit(X, y_single=y_single, y_dual=y_dual, choices=choices)
-
-    def test_fit_choices_wrapper_and_result(self):
-        """fit_choices delegates to fit and get_result returns summary."""
+    def test_fit_entrypoint_and_result(self):
+        """fit() uses choices-first workflow and get_result returns summary."""
         N, J, K = 80, 3, 2
         X, choices, true_beta = simulate_choices(N, J, K, seed=11)
         model = MultichoiceLogit(J, K)
 
-        model.fit_choices(X, choices)
+        model.fit(X, choices)
         y_single, y_dual = parse_choices(choices, J)
         se = model.compute_standard_errors(X, y_single, y_dual)
         res = model.get_result(standard_errors=se)
@@ -522,7 +504,7 @@ class TestFitMethod:
         N, J, K = 40, 3, 1
         X, y_single, y_dual, _ = simulate_data(N, J, K, seed=21)
         model = MultichoiceLogit(J, K)
-        model.fit(X, y_single, y_dual)
+        model.fit_matrix(X, y_single, y_dual)
 
         res = model.get_result()
         summary = res.summary()
@@ -535,7 +517,7 @@ class TestFitMethod:
         N, J, K = 50, 3, 1
         X, y_single, y_dual, _ = simulate_data(N, J, K, seed=5)
         model = MultichoiceLogit(J, K)
-        model.fit(X, y_single, y_dual)
+        model.fit_matrix(X, y_single, y_dual)
 
         res = model.get_result()
         summary = res.summary(verbose=True)
@@ -544,8 +526,8 @@ class TestFitMethod:
         assert "status" in summary
         assert "grad norm" in summary
 
-    def test_fit_requires_complete_inputs(self):
-        """Fit raises if neither choices nor both matrices are provided."""
+    def test_fit_matrix_requires_complete_inputs(self):
+        """fit_matrix raises if matrices are incomplete."""
         N, J, K = 20, 3, 1
         X = np.random.randn(N, K)
         y_single = np.zeros((N, J), dtype=np.int8)
@@ -553,10 +535,12 @@ class TestFitMethod:
 
         model = MultichoiceLogit(J, K)
 
-        with pytest.raises(ValueError, match="Provide either 'choices' or both"):
-            model.fit(X, y_single=y_single, y_dual=None)
+        with pytest.raises(
+            ValueError, match="Provide both 'y_single' and 'y_dual' for matrix fitting."
+        ):
+            model.fit_matrix(X, y_single=y_single, y_dual=None)
 
-    def test_fit_with_invalid_init_shape(self):
+    def test_fit_matrix_with_invalid_init_shape(self):
         """Test that invalid init_beta shape raises ValueError."""
         N, J, K = 100, 3, 2
         X, y_single, y_dual, _ = simulate_data(N, J, K, seed=42)
@@ -565,49 +549,49 @@ class TestFitMethod:
         init_beta_wrong = np.random.randn(10)  # Wrong size
 
         with pytest.raises(ValueError, match="init_beta must have size"):
-            model.fit(X, y_single, y_dual, init_beta=init_beta_wrong)
+            model.fit_matrix(X, y_single, y_dual, init_beta=init_beta_wrong)
 
-    def test_fit_with_different_methods(self):
-        """Test fit() with different optimization methods."""
+    def test_fit_matrix_with_different_methods(self):
+        """Test fit_matrix() with different optimization methods."""
         N, J, K = 200, 3, 2
         X, y_single, y_dual, _ = simulate_data(N, J, K, seed=42)
 
         for method in ["BFGS", "L-BFGS-B"]:
             model = MultichoiceLogit(J, K)
-            model.fit(X, y_single, y_dual, method=method)
+            model.fit_matrix(X, y_single, y_dual, method=method)
 
             assert model.coef_ is not None
             assert model.optimization_result_.success
 
-    def test_fit_with_custom_options(self):
-        """Test fit() with custom optimizer options."""
+    def test_fit_matrix_with_custom_options(self):
+        """Test fit_matrix() with custom optimizer options."""
         N, J, K = 200, 3, 2
         X, y_single, y_dual, _ = simulate_data(N, J, K, seed=42)
         model = MultichoiceLogit(J, K)
 
         custom_options = {"gtol": 1e-4, "maxiter": 500}
-        model.fit(X, y_single, y_dual, options=custom_options)
+        model.fit_matrix(X, y_single, y_dual, options=custom_options)
 
         assert model.coef_ is not None
         assert model.optimization_result_ is not None
 
-    def test_fit_method_chaining(self):
-        """Test that fit() supports method chaining."""
+    def test_fit_matrix_method_chaining(self):
+        """Test that fit_matrix() supports method chaining."""
         N, J, K = 200, 3, 2
         X, y_single, y_dual, _ = simulate_data(N, J, K, seed=42)
 
-        model = MultichoiceLogit(J, K).fit(X, y_single, y_dual)
+        model = MultichoiceLogit(J, K).fit_matrix(X, y_single, y_dual)
 
         assert model.coef_ is not None
         assert model.coef_.shape == (J - 1, K)
 
-    def test_fit_optimization_result_attributes(self):
+    def test_fit_matrix_optimization_result_attributes(self):
         """Test that optimization_result_ contains expected attributes."""
         N, J, K = 200, 3, 2
         X, y_single, y_dual, _ = simulate_data(N, J, K, seed=42)
         model = MultichoiceLogit(J, K)
 
-        model.fit(X, y_single, y_dual)
+        model.fit_matrix(X, y_single, y_dual)
 
         result = model.optimization_result_
 
