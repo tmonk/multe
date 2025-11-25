@@ -8,7 +8,6 @@ Fully vectorized implementation for fast simulation.
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
 import numpy as np
 import numpy.typing as npt
 
@@ -22,7 +21,7 @@ def simulate_data(
     seed: int | None = 42,
     rng: np.random.Generator | None = None,
     dtype: npt.DTypeLike = np.float64,
-) -> Tuple[
+) -> tuple[
     npt.NDArray[np.float64],
     npt.NDArray[np.int8],
     npt.NDArray[np.int8],
