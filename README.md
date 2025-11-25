@@ -92,7 +92,7 @@ The model fixes beta_0 = 0 for identification, so it estimates (J-1) × K parame
 
 - **X**: Covariates (N, K)
 - **y_single**: Binary matrix (N, J) where `y_single[i,j]=1` if agent i chose alternative j
-- **y_dual**: Binary tensor (N, J, J) where `y_dual[i,s,t]=1` if agent i chose pair {s,t} with s<t
+- **y_dual**: Binary tensor (N, J, J) where `y_dual[i,s,t]=1` if agent i chose pair {s,t} with s<t. Sparse CSR (shape N × J², row-major flattening) and tuple index inputs `(rows, s, t)` are also supported.
 
 Each agent must have exactly one choice (one entry in either y_single or y_dual).
 
@@ -112,14 +112,12 @@ Run benchmarks: `python examples/benchmark.py`
 
 ### MultichoiceLogit(num_alternatives, num_covariates)
 Model class with methods:
-- **`fit(X, y_single, y_dual, method='L-BFGS-B')`** - Fit model using MLE (recommended)
-  - Returns `self` with fitted `coef_` attribute
-  - Stores optimization details in `optimization_result_`
-- `compute_standard_errors(X, y_single, y_dual, flat_beta=None)` - Standard errors (uses fitted params by default)
-- `predict_proba(X, flat_beta=None)` - Single/dual choice probabilities
-- `log_likelihood_contributions(X, y_single, y_dual, flat_beta=None)` - Per-observation log-likelihoods
+- **`fit(X, y_single, y_dual, init_beta=None, method='L-BFGS-B', options=None, bounds=None, constraints=None, num_restarts=0, restart_scale=0.5, rng=None)`** – Fit model via MLE (returns `self`, stores result in `optimization_result_`).
+- `compute_standard_errors(X, y_single, y_dual, flat_beta=None, epsilon=None)` – Numerical Hessian SEs (uses fitted params by default).
+- `predict_proba(X, flat_beta=None)` – Single/dual choice probabilities.
+- `log_likelihood_contributions(X, y_single, y_dual, flat_beta=None)` – Per-observation log-likelihoods.
 
-### simulate_data(N, J, K, true_beta=None, mix_ratio=0.5, seed=42)
+### simulate_data(N, J, K, true_beta=None, mix_ratio=0.5, seed=42, rng=None, dtype=np.float64)
 Generate synthetic data following the RUM framework.
 
 Returns: `X, y_single, y_dual, true_beta`
