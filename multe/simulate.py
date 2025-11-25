@@ -8,9 +8,129 @@ Fully vectorized implementation for fast simulation.
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+import typing
+from collections.abc import Sequence
+from typing import TypeAlias
+
 import numpy as np
 import numpy.typing as npt
+
+Choice: TypeAlias = int | tuple[int, int]
+ChoicesSeq: TypeAlias = Sequence[Choice]
+
+
+def parse_choices(
+    choices: ChoicesSeq | np.ndarray,
+    J: int,
+) -> tuple[npt.NDArray[np.int8], npt.NDArray[np.int8]]:
+    """
+    Convert a list of choices to matrix/tensor format for model fitting.
+
+    Args:
+        choices: Length-N sequence where each element is either:
+            - int j: single choice of alternative j
+            - tuple (s, t): dual choice of pair {s, t}
+        J: Number of alternatives.
+
+    Returns:
+        y_single: Binary matrix (N, J)
+        y_dual: Binary tensor (N, J, J) with upper triangle entries.
+    """
+    if J < 2:
+        raise ValueError(f"J must be >= 2, got {J}")
+
+    # Handle pandas objects gracefully
+    if hasattr(choices, "to_numpy"):
+        choices_seq = list(typing.cast(np.ndarray, choices.to_numpy()).tolist())
+    elif isinstance(choices, np.ndarray):
+        choices_seq = choices.tolist()
+    else:
+        choices_seq = list(choices)
+
+    N = len(choices_seq)
+    y_single = np.zeros((N, J), dtype=np.int8)
+    y_dual = np.zeros((N, J, J), dtype=np.int8)
+
+    for i, raw_choice in enumerate(choices_seq):
+        choice = raw_choice
+        if (
+            isinstance(choice, (list, tuple, np.ndarray))
+            and len(choice) == 2
+            and not isinstance(choice, (np.integer, int))
+        ):
+            # Normalize list/array pairs to tuple
+            choice = (choice[0], choice[1])
+
+        if isinstance(choice, (int, np.integer)):
+            j = int(choice)
+            if not 0 <= j < J:
+                raise ValueError(f"Choice {choice} at index {i} out of range [0, {J})")
+            y_single[i, j] = 1
+            continue
+
+        if isinstance(choice, tuple) and len(choice) == 2:
+            s = int(choice[0])
+            t = int(choice[1])
+
+            if s == t:
+                raise ValueError(
+                    f"Dual choice at index {i} has identical alternatives: {(s, t)}"
+                )
+            if not (0 <= s < J and 0 <= t < J):
+                raise ValueError(f"Choice {(s, t)} at index {i} out of range [0, {J})")
+            if s > t:
+                s, t = t, s
+
+            y_dual[i, s, t] = 1
+            continue
+
+        raise ValueError(
+            f"Choice at index {i} must be int or tuple[int, int], got {raw_choice!r}"
+        )
+
+    return y_single, y_dual
+
+
+def simulate_choices(
+    N: int,
+    J: int,
+    K: int,
+    true_beta: npt.NDArray[np.float64] | None = None,
+    mix_ratio: float = 0.5,
+    seed: int | None = 42,
+    rng: np.random.Generator | None = None,
+    dtype: npt.DTypeLike = np.float64,
+) -> tuple[npt.NDArray[np.float64], list[Choice], npt.NDArray[np.float64]]:
+    """
+    Simulate data and return a choices list alongside X and true parameters.
+
+    Returns (X, choices, true_beta_free).
+    """
+    X, y_single, y_dual, true_beta_free = simulate_data(
+        N=N,
+        J=J,
+        K=K,
+        true_beta=true_beta,
+        mix_ratio=mix_ratio,
+        seed=seed,
+        rng=rng,
+        dtype=dtype,
+    )
+
+    choices: list[int | tuple[int, int]] = []
+    for i in range(N):
+        single_cols = np.flatnonzero(y_single[i])
+        if single_cols.size == 1:
+            choices.append(int(single_cols[0]))
+            continue
+
+        dual_indices = np.argwhere(y_dual[i])
+        if dual_indices.shape[0] != 1:
+            raise RuntimeError("Simulated data has invalid choice structure")
+        s, t = dual_indices[0]
+        choices.append((int(s), int(t)))
+
+    return X, choices, true_beta_free
 
 
 def simulate_data(
@@ -22,7 +142,7 @@ def simulate_data(
     seed: int | None = 42,
     rng: np.random.Generator | None = None,
     dtype: npt.DTypeLike = np.float64,
-) -> Tuple[
+) -> tuple[
     npt.NDArray[np.float64],
     npt.NDArray[np.int8],
     npt.NDArray[np.int8],

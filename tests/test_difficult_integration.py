@@ -31,7 +31,7 @@ class TestDifficultIntegration:
         # Note: We don't strictly expect a warning here because pinv finds a minimum norm solution
         # which might have valid positive diagonal elements even if unidentified.
         std_errs = model.compute_standard_errors(
-            model.coef_.flatten(), X, y_single, y_dual
+            X, y_single, y_dual, flat_beta=model.coef_.flatten()
         )
         assert std_errs is not None
         assert len(std_errs) == (J - 1) * K
@@ -99,7 +99,9 @@ class TestDifficultIntegration:
         assert model.coef_ is not None
         # Likely warns on SE calculation
         with pytest.warns(RuntimeWarning, match="Hessian inverse"):
-            model.compute_standard_errors(model.coef_.flatten(), X, y_single, y_dual)
+            model.compute_standard_errors(
+                X, y_single, y_dual, flat_beta=model.coef_.flatten()
+            )
 
     @pytest.mark.slow
     def test_large_scale_synthetic(self):

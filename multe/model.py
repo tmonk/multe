@@ -7,27 +7,218 @@ Supports single and dual (pairwise) discrete choices.
 
 from __future__ import annotations
 
+import dataclasses
 import typing
 import warnings
-from typing import Any, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any, TypeAlias, cast
 
 import numpy as np
 import numpy.typing as npt
 import scipy.sparse as sp
 from scipy.optimize import OptimizeResult, minimize
 from scipy.special import logsumexp
+from scipy.stats import norm
+
+from .simulate import parse_choices
 
 # Numerical constants for stability and accuracy
 CLIP_THRESHOLD = 1e-10  # Minimum probability value (avoid log(0))
 HESSIAN_EPSILON = 1e-5  # Step size for Hessian finite differences
 
 # Type alias for flexible dual-choice input formats
-DualInput = (
+DualInput: TypeAlias = (
     npt.NDArray[np.int8]
     | npt.NDArray[np.int64]
     | tuple[np.ndarray, np.ndarray, np.ndarray]
     | sp.spmatrix
 )
+
+
+@dataclasses.dataclass
+class ModelResult:
+    """Container for fitted parameters, standard errors, and optimizer result."""
+
+    coef: npt.NDArray[np.float64]
+    standard_errors: npt.NDArray[np.float64] | None
+    optimization_result: OptimizeResult | None
+
+    def summary(self, verbose: bool = False) -> str:
+        try:
+            from rich.console import Console
+            from rich.table import Table
+        except ImportError:  # pragma: no cover - optional dependency fallback
+            return self._summary_plain(verbose=verbose)
+
+        console = Console(
+            record=True, width=120, force_terminal=True, color_system="standard"
+        )
+        console.print("Model Result", style="bold magenta")
+
+        def fmt(val: float) -> str:
+            return f"{val:.4f}"
+
+        if (
+            self.standard_errors is not None
+            and self.standard_errors.size == self.coef.size
+        ):
+            se_matrix = self.standard_errors.reshape(self.coef.shape)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                z_scores = np.divide(
+                    self.coef,
+                    se_matrix,
+                    out=np.zeros_like(self.coef),
+                    where=se_matrix != 0,
+                )
+            p_values = 2 * (1 - norm.cdf(np.abs(z_scores)))
+
+            table = Table(
+                title="Coefficients with Inference",
+                show_header=True,
+                header_style="bold cyan",
+                box=None,
+                pad_edge=False,
+            )
+            table.add_column("alt", justify="right", style="bold")
+            table.add_column("k", justify="right", style="bold")
+            table.add_column("coef", justify="right")
+            table.add_column("se", justify="right")
+            table.add_column("z", justify="right")
+            table.add_column("p", justify="right")
+
+            num_alts, num_k = self.coef.shape
+            for i in range(num_alts):
+                for j in range(num_k):
+                    table.add_row(
+                        str(i + 1),
+                        str(j),
+                        f"[white]{fmt(self.coef[i, j])}",
+                        f"[white]{fmt(se_matrix[i, j])}",
+                        f"[yellow]{fmt(z_scores[i, j])}",
+                        f"[green]{fmt(p_values[i, j])}",
+                    )
+
+            console.print(table)
+        else:
+            table = Table(
+                title="Coefficients",
+                show_header=True,
+                header_style="bold cyan",
+                box=None,
+                pad_edge=False,
+            )
+            table.add_column("alt", justify="right", style="bold")
+            table.add_column("k", justify="right", style="bold")
+            for j in range(self.coef.shape[1]):
+                table.add_column(f"coef_k{j}", justify="right")
+
+            for i in range(self.coef.shape[0]):
+                row = [str(i + 1), "-"] + [fmt(v) for v in self.coef[i]]
+                table.add_row(*row)
+
+            console.print(table)
+
+            if self.standard_errors is not None:
+                console.print(
+                    "Standard Errors (vector): "
+                    + np.array2string(self.standard_errors, precision=4)
+                )
+            else:
+                console.print("Standard Errors: not computed", style="yellow")
+
+        if self.optimization_result is not None:
+            opt = self.optimization_result
+            opt_table = Table(
+                title="Optimizer", show_header=False, box=None, pad_edge=False
+            )
+            opt_table.add_column("", justify="right", style="bold")
+            opt_table.add_column("", justify="left")
+
+            opt_table.add_row("success", str(opt.success))
+            opt_table.add_row("fun", f"{opt.fun:.4f}")
+            opt_table.add_row("iterations", str(opt.nit))
+            opt_table.add_row("evals", str(getattr(opt, "nfev", "n/a")))
+
+            if verbose:
+                status = getattr(opt, "status", "n/a")
+                message = getattr(opt, "message", "")
+                njev = getattr(opt, "njev", "n/a")
+                grad_norm = None
+                if hasattr(opt, "jac") and opt.jac is not None:
+                    jac = np.asarray(opt.jac)
+                    grad_norm = float(np.linalg.norm(jac))
+
+                opt_table.add_row("status", f"{status}")
+                opt_table.add_row("message", f"{message}")
+                opt_table.add_row(
+                    "grad norm", f"{grad_norm:.6f}" if grad_norm is not None else "n/a"
+                )
+                opt_table.add_row("grad evals", f"{njev}")
+
+            console.print(opt_table)
+
+        return console.export_text(clear=False)
+
+    def _summary_plain(self, verbose: bool = False) -> str:
+        lines = ["Model Result"]
+        if (
+            self.standard_errors is not None
+            and self.standard_errors.size == self.coef.size
+        ):
+            se_matrix = self.standard_errors.reshape(self.coef.shape)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                z_scores = np.divide(
+                    self.coef,
+                    se_matrix,
+                    out=np.zeros_like(self.coef),
+                    where=se_matrix != 0,
+                )
+            p_values = 2 * (1 - norm.cdf(np.abs(z_scores)))
+
+            lines.append("Coefficients with Inference")
+            lines.append("alt  k     coef      se        z       p")
+            num_alts, num_k = self.coef.shape
+            for i in range(num_alts):
+                for j in range(num_k):
+                    lines.append(
+                        f"{i + 1:3d}  {j:1d}  "
+                        f"{self.coef[i, j]:8.4f}  {se_matrix[i, j]:6.4f}  "
+                        f"{z_scores[i, j]:8.4f}  {p_values[i, j]:6.4f}"
+                    )
+        else:
+            lines.append("Coefficients")
+            header = "alt  k   " + "  ".join(
+                f"coef_k{j}" for j in range(self.coef.shape[1])
+            )
+            lines.append(header)
+            for i, row in enumerate(self.coef):
+                coef_str = "  ".join(f"{v:8.4f}" for v in row)
+                lines.append(f"{i + 1:3d}  -   {coef_str}")
+
+        if self.optimization_result is not None:
+            opt = self.optimization_result
+            lines.append(
+                f"Optimizer: success={opt.success}, fun={opt.fun:.4f}, iterations={opt.nit}, evals={getattr(opt, 'nfev', 'n/a')}"
+            )
+            if verbose:
+                status = getattr(opt, "status", "n/a")
+                message = getattr(opt, "message", "")
+                njev = getattr(opt, "njev", "n/a")
+                grad_norm = None
+                if hasattr(opt, "jac") and opt.jac is not None:
+                    jac = np.asarray(opt.jac)
+                    grad_norm = float(np.linalg.norm(jac))
+
+                lines.append(f"Status: {status}")
+                lines.append(f"Message: {message}")
+                lines.append(
+                    f"Grad norm: {grad_norm:.6f}"
+                    if grad_norm is not None
+                    else "Grad norm: n/a"
+                )
+                lines.append(f"Grad evals: {njev}")
+
+        return "\n".join(lines)
 
 
 class MultichoiceLogit:
@@ -151,7 +342,7 @@ class MultichoiceLogit:
         if isinstance(y_dual, tuple):
             if len(y_dual) != 3:
                 raise ValueError("y_dual tuple must have length 3 (rows, s, t)")
-            rows, s_idx, t_idx = y_dual
+            rows, s_idx, t_idx = cast(tuple[np.ndarray, np.ndarray, np.ndarray], y_dual)
             if not (len(rows) == len(s_idx) == len(t_idx)):
                 raise ValueError("y_dual index arrays must have the same length")
             return (
@@ -161,7 +352,7 @@ class MultichoiceLogit:
             )
 
         if sp.issparse(y_dual):
-            coo = y_dual.tocoo()
+            coo = cast(sp.spmatrix, y_dual).tocoo()
             rows = coo.row
             cols = coo.col
             s_idx = cols // J
@@ -233,18 +424,23 @@ class MultichoiceLogit:
 
         # Binary checks for dense/sparse formats
         if isinstance(y_dual, np.ndarray):
-            if y_dual.shape != (N, self.J, self.J):
+            y_dual_array = cast(npt.NDArray[np.int64] | npt.NDArray[np.int8], y_dual)
+            if y_dual_array.shape != (N, self.J, self.J):
                 raise ValueError(
-                    f"y_dual must have shape ({N}, {self.J}, {self.J}), got {y_dual.shape}"
+                    f"y_dual must have shape ({N}, {self.J}, {self.J}), got {y_dual_array.shape}"
                 )
-            if not np.isin(y_dual, (0, 1)).all():
+            if not np.isin(y_dual_array, (0, 1)).all():
                 raise ValueError("y_dual must be binary (contain only 0 or 1).")
         elif sp.issparse(y_dual):
-            if y_dual.shape != (N, self.J * self.J):
+            y_dual_sparse = cast(sp.spmatrix, y_dual)
+            if y_dual_sparse.shape != (N, self.J * self.J):
                 raise ValueError(
                     f"sparse y_dual must have shape ({N}, {self.J * self.J})"
                 )
-            if y_dual.data.size and not np.isin(y_dual.data, (0, 1)).all():
+            if (
+                y_dual_sparse.data.size
+                and not np.isin(y_dual_sparse.data, (0, 1)).all()
+            ):
                 raise ValueError("Sparse y_dual must be binary.")
 
         # Check that each agent has exactly one choice
@@ -265,17 +461,18 @@ class MultichoiceLogit:
 
     def fit(
         self,
-        X: npt.NDArray[np.float64],
-        y_single: npt.NDArray[np.int8],
-        y_dual: DualInput,
-        init_beta: Optional[npt.NDArray[np.float64]] = None,
+        X: npt.ArrayLike,
+        y_single: npt.NDArray[np.int8] | None = None,
+        y_dual: DualInput | None = None,
+        choices: Sequence[int | tuple[int, int]] | None = None,
+        init_beta: npt.NDArray[np.float64] | None = None,
         method: str = "L-BFGS-B",
-        options: Optional[dict[str, Any]] = None,
-        bounds: Optional[Sequence[tuple[float | None, float | None]]] = None,
-        constraints: Optional[Sequence[Any]] = None,
+        options: dict[str, Any] | None = None,
+        bounds: Sequence[tuple[float | None, float | None]] | None = None,
+        constraints: Sequence[Any] | None = None,
         num_restarts: int = 0,
         restart_scale: float = 0.5,
-        rng: Optional[np.random.Generator] = None,
+        rng: np.random.Generator | None = None,
     ) -> MultichoiceLogit:
         """
         Fit the multichoice logit model using maximum likelihood estimation.
@@ -287,6 +484,9 @@ class MultichoiceLogit:
                 - Dense tensor (N, J, J) with y_dual[i, s, t] = 1 for pair {s, t}
                 - Sparse matrix (N, J*J) with row-major flattening
                 - Index triplet (rows, s, t)
+            choices: Optional list of choices (int for single, tuple for dual). If
+                provided, y_single/y_dual must be None and will be derived via
+                parse_choices.
             init_beta: Initial parameter values, flat array of size (J-1)*K.
                 Defaults to zeros.
             method: Optimization method for scipy.optimize.minimize.
@@ -308,6 +508,18 @@ class MultichoiceLogit:
         """
         if options is None:
             options = {"gtol": 1e-5, "maxiter": 1000}
+
+        # Accept pandas objects for X and choices by converting to numpy
+        X = np.asarray(X, dtype=np.float64)
+
+        if choices is not None:
+            if y_single is not None or y_dual is not None:
+                raise ValueError(
+                    "Provide either 'choices' or 'y_single'/'y_dual', not both"
+                )
+            y_single, y_dual = parse_choices(choices, self.J)
+        elif y_single is None or y_dual is None:
+            raise ValueError("Provide either 'choices' or both 'y_single' and 'y_dual'")
 
         # Validate data and prepare indices once
         single_indices, dual_indices = self._validate_data(X, y_single, y_dual)
@@ -362,6 +574,28 @@ class MultichoiceLogit:
         self.optimization_result_ = best_result
 
         return self
+
+    def fit_choices(
+        self,
+        X: npt.ArrayLike,
+        choices: Sequence[int | tuple[int, int]],
+        **kwargs: Any,
+    ) -> MultichoiceLogit:
+        """Convenience wrapper around fit() when supplying a choices list."""
+        return self.fit(X=X, choices=choices, **kwargs)
+
+    def get_result(
+        self,
+        standard_errors: npt.NDArray[np.float64] | None = None,
+    ) -> ModelResult:
+        """Return a ModelResult snapshot of the fitted model."""
+        if self.coef_ is None:
+            raise ValueError("Model is not fitted; call fit() first.")
+        return ModelResult(
+            coef=self.coef_,
+            standard_errors=standard_errors,
+            optimization_result=self.optimization_result_,
+        )
 
     def _neg_log_likelihood(
         self,
@@ -527,23 +761,24 @@ class MultichoiceLogit:
         flat_beta: npt.NDArray[np.float64],
         X: npt.NDArray[np.float64],
         y_single: npt.NDArray[np.int8],
-        y_dual: npt.NDArray[np.int8],
+        y_dual: DualInput,
     ) -> npt.NDArray[np.float64]:
         """
         Computes the analytical gradient (Jacobian).
-        Wrapper for public API compliance that computes indices on the fly.
+
+        Validates inputs and delegates to the internal gradient implementation.
+        Supports dense, sparse, and tuple formats for dual choices.
         """
-        self._validate_data(X, y_single, y_dual)
-        single_indices, dual_indices = self._prepare_data(y_single, y_dual)
-        return self._gradient_fast(flat_beta, X, single_indices, dual_indices)
+        single_indices, dual_indices = self._validate_data(X, y_single, y_dual)
+        return self._gradient(flat_beta, X, single_indices, dual_indices)
 
     def compute_standard_errors(
         self,
         X: npt.NDArray[np.float64],
         y_single: npt.NDArray[np.int8],
         y_dual: DualInput,
-        flat_beta: Optional[npt.NDArray[np.float64]] = None,
-        epsilon: Optional[float] = None,
+        flat_beta: npt.NDArray[np.float64] | None = None,
+        epsilon: float | None = None,
     ) -> npt.NDArray[np.float64]:
         """
         Compute standard errors via numerical Hessian approximation.
@@ -617,7 +852,7 @@ class MultichoiceLogit:
     def predict_proba(
         self,
         X: npt.NDArray[np.float64],
-        flat_beta: Optional[npt.NDArray[np.float64]] = None,
+        flat_beta: npt.NDArray[np.float64] | None = None,
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         """
         Compute predicted probabilities for single and dual choices.
@@ -670,7 +905,7 @@ class MultichoiceLogit:
         X: npt.NDArray[np.float64],
         y_single: npt.NDArray[np.int8],
         y_dual: DualInput,
-        flat_beta: Optional[npt.NDArray[np.float64]] = None,
+        flat_beta: npt.NDArray[np.float64] | None = None,
     ) -> npt.NDArray[np.float64]:
         """
         Compute per-observation log-likelihood contributions.
@@ -724,7 +959,7 @@ class MultichoiceLogit:
         X: npt.NDArray[np.float64],
         y_single: npt.NDArray[np.int8],
         y_dual: DualInput,
-        flat_beta: Optional[npt.NDArray[np.float64]] = None,
+        flat_beta: npt.NDArray[np.float64] | None = None,
     ) -> float:
         """
         Compute the total log-likelihood of the model.

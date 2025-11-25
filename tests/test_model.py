@@ -2,8 +2,9 @@
 
 import numpy as np
 import pytest
+import scipy.sparse as sp
 
-from multe import MultichoiceLogit, simulate_data
+from multe import MultichoiceLogit, parse_choices, simulate_choices, simulate_data
 
 
 class TestMultichoiceLogitInit:
@@ -360,6 +361,38 @@ class TestGradient:
 
         assert np.allclose(dense_grad, tuple_grad)
 
+    def test_public_gradient_matches_private(self):
+        """Public gradient uses the validated indices and matches the internal version."""
+        N, J, K = 60, 3, 2
+        X, y_single, y_dual, true_beta = simulate_data(N, J, K, mix_ratio=0.4, seed=123)
+        model = MultichoiceLogit(J, K)
+
+        flat_beta = true_beta.flatten()
+        single_idx, dual_idx = model._validate_data(X, y_single, y_dual)
+
+        internal = model._gradient(flat_beta, X, single_idx, dual_idx)
+        public = model.gradient(flat_beta, X, y_single, y_dual)
+
+        np.testing.assert_allclose(public, internal)
+
+    def test_public_gradient_accepts_sparse_and_tuple_dual(self):
+        """Public gradient handles tuple and sparse dual inputs consistently."""
+        N, J, K = 50, 3, 2
+        X, y_single, y_dual, true_beta = simulate_data(N, J, K, mix_ratio=0.35, seed=7)
+        model = MultichoiceLogit(J, K)
+
+        flat_beta = true_beta.flatten()
+
+        # Tuple format
+        rows, s_idx, t_idx = np.nonzero(y_dual)
+        tuple_grad = model.gradient(flat_beta, X, y_single, (rows, s_idx, t_idx))
+
+        # Sparse format (row-major flattening)
+        sparse_dual = sp.csr_matrix(y_dual.reshape(N, J * J))
+        sparse_grad = model.gradient(flat_beta, X, y_single, sparse_dual)
+
+        np.testing.assert_allclose(tuple_grad, sparse_grad)
+
 
 class TestComputeStandardErrors:
     """Test standard error computation."""
@@ -450,6 +483,78 @@ class TestFitMethod:
 
         assert model.coef_ is not None
         assert model.coef_.shape == (J - 1, K)
+
+    def test_fit_with_choices_argument(self):
+        """Fit accepts choices list directly and rejects mixed inputs."""
+        N, J, K = 100, 3, 2
+        rng = np.random.default_rng(0)
+        X = rng.normal(size=(N, K))
+        # Build simple deterministic choices
+        choices = [0 if x[0] < 0 else (1, 2) for x in X]
+
+        model = MultichoiceLogit(J, K)
+        model.fit(X, choices=choices)
+
+        assert model.coef_ is not None
+
+        # Supplying both should error
+        y_single, y_dual = parse_choices(choices, J)
+        with pytest.raises(ValueError, match="either 'choices' or 'y_single'/'y_dual'"):
+            model.fit(X, y_single=y_single, y_dual=y_dual, choices=choices)
+
+    def test_fit_choices_wrapper_and_result(self):
+        """fit_choices delegates to fit and get_result returns summary."""
+        N, J, K = 80, 3, 2
+        X, choices, true_beta = simulate_choices(N, J, K, seed=11)
+        model = MultichoiceLogit(J, K)
+
+        model.fit_choices(X, choices)
+        y_single, y_dual = parse_choices(choices, J)
+        se = model.compute_standard_errors(X, y_single, y_dual)
+        res = model.get_result(standard_errors=se)
+
+        assert res.coef.shape == (J - 1, K)
+        summary = res.summary()
+        assert "Coefficients with Inference" in summary
+
+    def test_summary_without_standard_errors(self):
+        """Summary still renders when standard errors are absent."""
+        N, J, K = 40, 3, 1
+        X, y_single, y_dual, _ = simulate_data(N, J, K, seed=21)
+        model = MultichoiceLogit(J, K)
+        model.fit(X, y_single, y_dual)
+
+        res = model.get_result()
+        summary = res.summary()
+
+        assert "Coefficients" in summary
+        assert "Optimizer" in summary
+
+    def test_summary_verbose_includes_optimizer_details(self):
+        """Verbose summary prints optimizer meta rows."""
+        N, J, K = 50, 3, 1
+        X, y_single, y_dual, _ = simulate_data(N, J, K, seed=5)
+        model = MultichoiceLogit(J, K)
+        model.fit(X, y_single, y_dual)
+
+        res = model.get_result()
+        summary = res.summary(verbose=True)
+
+        assert "Optimizer" in summary
+        assert "status" in summary
+        assert "grad norm" in summary
+
+    def test_fit_requires_complete_inputs(self):
+        """Fit raises if neither choices nor both matrices are provided."""
+        N, J, K = 20, 3, 1
+        X = np.random.randn(N, K)
+        y_single = np.zeros((N, J), dtype=np.int8)
+        y_single[:, 0] = 1
+
+        model = MultichoiceLogit(J, K)
+
+        with pytest.raises(ValueError, match="Provide either 'choices' or both"):
+            model.fit(X, y_single=y_single, y_dual=None)
 
     def test_fit_with_invalid_init_shape(self):
         """Test that invalid init_beta shape raises ValueError."""
