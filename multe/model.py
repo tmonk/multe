@@ -10,7 +10,7 @@ from __future__ import annotations
 import typing
 import warnings
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, TypeAlias, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -23,7 +23,7 @@ CLIP_THRESHOLD = 1e-10  # Minimum probability value (avoid log(0))
 HESSIAN_EPSILON = 1e-5  # Step size for Hessian finite differences
 
 # Type alias for flexible dual-choice input formats
-DualInput = (
+DualInput: TypeAlias = (
     npt.NDArray[np.int8]
     | npt.NDArray[np.int64]
     | tuple[np.ndarray, np.ndarray, np.ndarray]
@@ -152,7 +152,7 @@ class MultichoiceLogit:
         if isinstance(y_dual, tuple):
             if len(y_dual) != 3:
                 raise ValueError("y_dual tuple must have length 3 (rows, s, t)")
-            rows, s_idx, t_idx = y_dual
+            rows, s_idx, t_idx = cast(tuple[np.ndarray, np.ndarray, np.ndarray], y_dual)
             if not (len(rows) == len(s_idx) == len(t_idx)):
                 raise ValueError("y_dual index arrays must have the same length")
             return (
@@ -162,7 +162,7 @@ class MultichoiceLogit:
             )
 
         if sp.issparse(y_dual):
-            coo = y_dual.tocoo()
+            coo = cast(sp.spmatrix, y_dual).tocoo()
             rows = coo.row
             cols = coo.col
             s_idx = cols // J
@@ -234,18 +234,23 @@ class MultichoiceLogit:
 
         # Binary checks for dense/sparse formats
         if isinstance(y_dual, np.ndarray):
-            if y_dual.shape != (N, self.J, self.J):
+            y_dual_array = cast(npt.NDArray[np.int64] | npt.NDArray[np.int8], y_dual)
+            if y_dual_array.shape != (N, self.J, self.J):
                 raise ValueError(
-                    f"y_dual must have shape ({N}, {self.J}, {self.J}), got {y_dual.shape}"
+                    f"y_dual must have shape ({N}, {self.J}, {self.J}), got {y_dual_array.shape}"
                 )
-            if not np.isin(y_dual, (0, 1)).all():
+            if not np.isin(y_dual_array, (0, 1)).all():
                 raise ValueError("y_dual must be binary (contain only 0 or 1).")
         elif sp.issparse(y_dual):
-            if y_dual.shape != (N, self.J * self.J):
+            y_dual_sparse = cast(sp.spmatrix, y_dual)
+            if y_dual_sparse.shape != (N, self.J * self.J):
                 raise ValueError(
                     f"sparse y_dual must have shape ({N}, {self.J * self.J})"
                 )
-            if y_dual.data.size and not np.isin(y_dual.data, (0, 1)).all():
+            if (
+                y_dual_sparse.data.size
+                and not np.isin(y_dual_sparse.data, (0, 1)).all()
+            ):
                 raise ValueError("Sparse y_dual must be binary.")
 
         # Check that each agent has exactly one choice
