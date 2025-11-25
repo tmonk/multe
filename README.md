@@ -18,7 +18,7 @@ If you use this package, please cite it as:
 ```
 @misc{monk2025multe,
   author = {Thomas Monk},
-  title = {Multe: Multichoice Logit Estimation},
+  title = {multe},
   howpublished = {\url{https://github.com/tmonk/multe}},
   year = {2025}
 }
@@ -109,19 +109,15 @@ Fully vectorized implementation for fast estimation and simulation:
 
 Run benchmarks: `python examples/benchmark.py`
 
-## API Reference (choices-first)
+## API Reference
 
-### MultichoiceLogit(num_alternatives, num_covariates)
-Model class with methods:
-- **`fit(X, choices, **kwargs)`** – Fit via MLE using the choices-first workflow.
-- `get_result(standard_errors=None)` – Returns a `ModelResult` snapshot with `summary()` for quick inspection.
-- `predict_proba(X, flat_beta=None)` – Single/dual choice probabilities.
-
-### parse_choices(choices, J)
-Convert a list of choices (ints or `(s, t)` tuples) into `y_single, y_dual`.
-
-### simulate_choices(N, J, K, true_beta=None, mix_ratio=0.5, seed=42, rng=None, dtype=np.float64)
-Generate synthetic data and return `(X, choices, true_beta)` in the choices-first format.
+- `MultichoiceLogit(num_alternatives, num_covariates)` – model class.
+- `fit(X, choices, **kwargs)` – choices-first MLE.
+- `get_result(standard_errors=None)` – `ModelResult` snapshot with `summary()`.
+- `predict_proba(X, flat_beta=None)` – single/dual choice probabilities.
+- `log_likelihood_contributions(X, y_single, y_dual, flat_beta=None)` – per-observation log-likelihoods (convert via `parse_choices` if starting from choices).
+- `parse_choices(choices, J)` – convert choice list to `(y_single, y_dual)`.
+- `simulate_choices(N, J, K, true_beta=None, mix_ratio=0.5, seed=42, rng=None, dtype=np.float64)` – generate `(X, choices, true_beta)`; `true_beta` shape is `(J-1, K)` (first alternative fixed to zero).
 
 ## Interpreting the output
 
@@ -145,8 +141,6 @@ from multe import MultichoiceLogit, parse_choices, simulate_choices, simulate_da
 
 X, choices, _ = simulate_choices(N=1000, J=4, K=3, seed=42)
 y_single, y_dual = parse_choices(choices, J=4)
-# or X, y_single, y_dual, true_beta = simulate_data(N=1000, J=4, K=3, seed=42)
-
 model = MultichoiceLogit(num_alternatives=4, num_covariates=3)
 model.fit_matrix(X, y_single=y_single, y_dual=y_dual)
 ```
