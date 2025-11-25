@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import typing
 import warnings
-from typing import Any, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -268,14 +269,14 @@ class MultichoiceLogit:
         X: npt.NDArray[np.float64],
         y_single: npt.NDArray[np.int8],
         y_dual: DualInput,
-        init_beta: Optional[npt.NDArray[np.float64]] = None,
+        init_beta: npt.NDArray[np.float64] | None = None,
         method: str = "L-BFGS-B",
-        options: Optional[dict[str, Any]] = None,
-        bounds: Optional[Sequence[tuple[float | None, float | None]]] = None,
-        constraints: Optional[Sequence[Any]] = None,
+        options: dict[str, Any] | None = None,
+        bounds: Sequence[tuple[float | None, float | None]] | None = None,
+        constraints: Sequence[Any] | None = None,
         num_restarts: int = 0,
         restart_scale: float = 0.5,
-        rng: Optional[np.random.Generator] = None,
+        rng: np.random.Generator | None = None,
     ) -> MultichoiceLogit:
         """
         Fit the multichoice logit model using maximum likelihood estimation.
@@ -527,23 +528,24 @@ class MultichoiceLogit:
         flat_beta: npt.NDArray[np.float64],
         X: npt.NDArray[np.float64],
         y_single: npt.NDArray[np.int8],
-        y_dual: npt.NDArray[np.int8],
+        y_dual: DualInput,
     ) -> npt.NDArray[np.float64]:
         """
         Computes the analytical gradient (Jacobian).
-        Wrapper for public API compliance that computes indices on the fly.
+
+        Validates inputs and delegates to the internal gradient implementation.
+        Supports dense, sparse, and tuple formats for dual choices.
         """
-        self._validate_data(X, y_single, y_dual)
-        single_indices, dual_indices = self._prepare_data(y_single, y_dual)
-        return self._gradient_fast(flat_beta, X, single_indices, dual_indices)
+        single_indices, dual_indices = self._validate_data(X, y_single, y_dual)
+        return self._gradient(flat_beta, X, single_indices, dual_indices)
 
     def compute_standard_errors(
         self,
         X: npt.NDArray[np.float64],
         y_single: npt.NDArray[np.int8],
         y_dual: DualInput,
-        flat_beta: Optional[npt.NDArray[np.float64]] = None,
-        epsilon: Optional[float] = None,
+        flat_beta: npt.NDArray[np.float64] | None = None,
+        epsilon: float | None = None,
     ) -> npt.NDArray[np.float64]:
         """
         Compute standard errors via numerical Hessian approximation.
@@ -617,7 +619,7 @@ class MultichoiceLogit:
     def predict_proba(
         self,
         X: npt.NDArray[np.float64],
-        flat_beta: Optional[npt.NDArray[np.float64]] = None,
+        flat_beta: npt.NDArray[np.float64] | None = None,
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         """
         Compute predicted probabilities for single and dual choices.
@@ -670,7 +672,7 @@ class MultichoiceLogit:
         X: npt.NDArray[np.float64],
         y_single: npt.NDArray[np.int8],
         y_dual: DualInput,
-        flat_beta: Optional[npt.NDArray[np.float64]] = None,
+        flat_beta: npt.NDArray[np.float64] | None = None,
     ) -> npt.NDArray[np.float64]:
         """
         Compute per-observation log-likelihood contributions.
@@ -724,7 +726,7 @@ class MultichoiceLogit:
         X: npt.NDArray[np.float64],
         y_single: npt.NDArray[np.int8],
         y_dual: DualInput,
-        flat_beta: Optional[npt.NDArray[np.float64]] = None,
+        flat_beta: npt.NDArray[np.float64] | None = None,
     ) -> float:
         """
         Compute the total log-likelihood of the model.

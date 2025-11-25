@@ -63,7 +63,7 @@ def benchmark_estimation(N, J, K, mix_ratio=0.5, method="BFGS", seed=42):
     # Compute standard errors
     t0 = time.time()
     # Compute standard errors (runtime tracked, values unused in benchmark output)
-    _ = model.compute_standard_errors(result.x, X, y_single, y_dual)
+    _ = model.compute_standard_errors(X, y_single, y_dual, flat_beta=result.x)
     se_time = time.time() - t0
 
     return {

@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+import scipy.sparse as sp
 
 from multe import MultichoiceLogit, simulate_data
 
@@ -359,6 +360,38 @@ class TestGradient:
         tuple_grad = model._gradient(flat_beta, X, single_tuple, dual_tuple)
 
         assert np.allclose(dense_grad, tuple_grad)
+
+    def test_public_gradient_matches_private(self):
+        """Public gradient uses the validated indices and matches the internal version."""
+        N, J, K = 60, 3, 2
+        X, y_single, y_dual, true_beta = simulate_data(N, J, K, mix_ratio=0.4, seed=123)
+        model = MultichoiceLogit(J, K)
+
+        flat_beta = true_beta.flatten()
+        single_idx, dual_idx = model._validate_data(X, y_single, y_dual)
+
+        internal = model._gradient(flat_beta, X, single_idx, dual_idx)
+        public = model.gradient(flat_beta, X, y_single, y_dual)
+
+        np.testing.assert_allclose(public, internal)
+
+    def test_public_gradient_accepts_sparse_and_tuple_dual(self):
+        """Public gradient handles tuple and sparse dual inputs consistently."""
+        N, J, K = 50, 3, 2
+        X, y_single, y_dual, true_beta = simulate_data(N, J, K, mix_ratio=0.35, seed=7)
+        model = MultichoiceLogit(J, K)
+
+        flat_beta = true_beta.flatten()
+
+        # Tuple format
+        rows, s_idx, t_idx = np.nonzero(y_dual)
+        tuple_grad = model.gradient(flat_beta, X, y_single, (rows, s_idx, t_idx))
+
+        # Sparse format (row-major flattening)
+        sparse_dual = sp.csr_matrix(y_dual.reshape(N, J * J))
+        sparse_grad = model.gradient(flat_beta, X, y_single, sparse_dual)
+
+        np.testing.assert_allclose(tuple_grad, sparse_grad)
 
 
 class TestComputeStandardErrors:
