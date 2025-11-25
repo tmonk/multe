@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from multe import simulate_data
+from multe import parse_choices, simulate_choices, simulate_data
 
 
 class TestSimulateDataValidation:
@@ -47,6 +47,48 @@ class TestSimulateDataValidation:
         wrong_beta = np.random.randn(3, 3)  # Should be (J-1, K) = (2, 2)
         with pytest.raises(ValueError, match="true_beta must have shape"):
             simulate_data(N=100, J=3, K=2, true_beta=wrong_beta)
+
+
+class TestParseChoices:
+    """Tests for parse_choices helper."""
+
+    def test_parse_mixed_choices(self):
+        choices = [0, (1, 3), 2, (0, 2)]
+        y_single, y_dual = parse_choices(choices, J=4)
+
+        assert y_single.shape == (4, 4)
+        assert y_dual.shape == (4, 4, 4)
+        np.testing.assert_array_equal(y_single.sum(axis=1), np.array([1, 0, 1, 0]))
+        assert y_dual[1, 1, 3] == 1 and y_dual[1, 3, 1] == 0
+        assert y_dual[3, 0, 2] == 1 and y_dual[3, 2, 0] == 0
+
+    def test_parse_validates_bounds_and_diagonal(self):
+        with pytest.raises(ValueError, match="out of range"):
+            parse_choices([5], J=3)
+        with pytest.raises(ValueError, match="identical alternatives"):
+            parse_choices([(1, 1)], J=3)
+        with pytest.raises(ValueError, match="out of range"):
+            parse_choices([(1, 5)], J=4)
+
+    def test_parse_sorts_pairs(self):
+        _, y_dual = parse_choices([(3, 1)], J=4)
+        assert y_dual[0, 1, 3] == 1
+
+
+class TestSimulateChoices:
+    """Tests for simulate_choices helper."""
+
+    def test_simulate_choices_shapes(self):
+        X, choices, true_beta = simulate_choices(N=50, J=3, K=2, seed=5)
+        assert X.shape == (50, 2)
+        assert len(choices) == 50
+        assert true_beta.shape == (2, 2)
+
+    def test_simulate_choices_convert_back(self):
+        X, choices, _ = simulate_choices(N=30, J=3, K=1, seed=7)
+        y_single, y_dual = parse_choices(choices, J=3)
+        assert y_single.shape == (30, 3)
+        assert y_dual.shape == (30, 3, 3)
 
 
 class TestSimulateDataOutput:

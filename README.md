@@ -41,20 +41,23 @@ pip install -e .
 ## Quick Start
 
 ```python
-from multe import MultichoiceLogit, simulate_data
+from multe import MultichoiceLogit, parse_choices, simulate_choices, simulate_data
 
-# Generate synthetic data
+# Matrix-first workflow
 X, y_single, y_dual, true_beta = simulate_data(N=1000, J=4, K=3, seed=42)
-
-# Fit model
 model = MultichoiceLogit(num_alternatives=4, num_covariates=3)
 model.fit(X, y_single, y_dual)
+print(model.get_result().summary())
 
-# Access fitted coefficients
-print(model.coef_)  # Shape: (J-1, K) = (3, 3)
+# Choices-first workflow (easiest entry point)
+X2, choices, _ = simulate_choices(N=1000, J=4, K=3, seed=123)
+model.fit_choices(X2, choices)
+
+# Access matrices if you need them
+y_single2, y_dual2 = parse_choices(choices, J=4)
 ```
 
-See `examples/simple_fit_example.py` for a complete example, or `examples/basic_example.py` for advanced usage.
+See `examples/quickstart.py` for a ready-to-run script, `examples/simple_fit_example.py` for a complete example, or `examples/basic_example.py` for advanced usage.
 
 ## Model
 
@@ -91,8 +94,9 @@ The model fixes beta_0 = 0 for identification, so it estimates (J-1) × K parame
 ## Data Format
 
 - **X**: Covariates (N, K)
+- **Choices** (recommended): Length-N list of either `int` (single choice) or `(s, t)` tuples (dual choice). Convert to model-ready matrices with `parse_choices(choices, J)` or pass directly to `fit_choices`/`fit(..., choices=...)`.
 - **y_single**: Binary matrix (N, J) where `y_single[i,j]=1` if agent i chose alternative j
-- **y_dual**: Binary tensor (N, J, J) where `y_dual[i,s,t]=1` if agent i chose pair {s,t} with s<t. Sparse CSR (shape N × J², row-major flattening) and tuple index inputs `(rows, s, t)` are also supported.
+- **y_dual**: Binary tensor (N, J, J) where `y_dual[i,s,t]=1` if agent i chose pair {s,t} with s<t. Sparse CSR (shape N × J², row-major flattening) and tuple index inputs `(rows, s, t)` are also supported if you build them yourself.
 
 Each agent must have exactly one choice (one entry in either y_single or y_dual).
 
@@ -112,15 +116,33 @@ Run benchmarks: `python examples/benchmark.py`
 
 ### MultichoiceLogit(num_alternatives, num_covariates)
 Model class with methods:
-- **`fit(X, y_single, y_dual, init_beta=None, method='L-BFGS-B', options=None, bounds=None, constraints=None, num_restarts=0, restart_scale=0.5, rng=None)`** – Fit model via MLE (returns `self`, stores result in `optimization_result_`).
+- **`fit(X, y_single=None, y_dual=None, choices=None, init_beta=None, method='L-BFGS-B', options=None, bounds=None, constraints=None, num_restarts=0, restart_scale=0.5, rng=None)`** – Fit via MLE. Provide either `choices` (ints/tuples) or both `y_single` and `y_dual`. Returns `self`, stores result in `optimization_result_`.
+- `fit_choices(X, choices, **kwargs)` – Convenience wrapper for the choices-first workflow.
+- `get_result(standard_errors=None)` – Returns a `ModelResult` snapshot with `summary()` for quick inspection.
+- **`gradient(flat_beta, X, y_single, y_dual)`** – Public analytical gradient; accepts dense, sparse, or tuple dual inputs.
 - `compute_standard_errors(X, y_single, y_dual, flat_beta=None, epsilon=None)` – Numerical Hessian SEs (uses fitted params by default).
 - `predict_proba(X, flat_beta=None)` – Single/dual choice probabilities.
 - `log_likelihood_contributions(X, y_single, y_dual, flat_beta=None)` – Per-observation log-likelihoods.
+
+### parse_choices(choices, J)
+Convert a list of choices (ints or `(s, t)` tuples) into `y_single, y_dual`.
+
+### simulate_choices(N, J, K, true_beta=None, mix_ratio=0.5, seed=42, rng=None, dtype=np.float64)
+Generate synthetic data and return `(X, choices, true_beta)` in the choices-first format.
 
 ### simulate_data(N, J, K, true_beta=None, mix_ratio=0.5, seed=42, rng=None, dtype=np.float64)
 Generate synthetic data following the RUM framework.
 
 Returns: `X, y_single, y_dual, true_beta`
+
+## Interpreting the output
+
+The inference table shows one row per alternative (`alt`) and covariate (`k`): the estimated coefficient, its standard error, z-score, and p-value.
+
+Example (immigration attitudes):
+- `alt1` = “less immigration”, `alt2` = “stay the same”, `alt3` = “more immigration”.
+- `k0` = non-EU migrant share, `k1` = unemployment rate.
+- A row `alt=1, k=0, coef=-0.26` means higher non-EU share is associated with lower likelihood of choosing “less immigration”. Each row reads the same way for every attitude option and predictor.
 
 ## Acknowledgements
 
