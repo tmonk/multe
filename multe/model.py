@@ -16,8 +16,6 @@ from typing import Any, TypeAlias, cast
 import numpy as np
 import numpy.typing as npt
 import scipy.sparse as sp
-from rich.console import Console
-from rich.table import Table
 from scipy.optimize import OptimizeResult, minimize
 from scipy.special import logsumexp
 from scipy.stats import norm
@@ -39,11 +37,19 @@ DualInput: TypeAlias = (
 
 @dataclasses.dataclass
 class ModelResult:
+    """Container for fitted parameters, standard errors, and optimizer result."""
+
     coef: npt.NDArray[np.float64]
     standard_errors: npt.NDArray[np.float64] | None
     optimization_result: OptimizeResult | None
 
     def summary(self, verbose: bool = False) -> str:
+        try:
+            from rich.console import Console
+            from rich.table import Table
+        except ImportError:  # pragma: no cover - optional dependency fallback
+            return self._summary_plain(verbose=verbose)
+
         console = Console(
             record=True, width=120, force_terminal=True, color_system="standard"
         )
@@ -152,6 +158,67 @@ class ModelResult:
             console.print(opt_table)
 
         return console.export_text(clear=False)
+
+    def _summary_plain(self, verbose: bool = False) -> str:
+        lines = ["Model Result"]
+        if (
+            self.standard_errors is not None
+            and self.standard_errors.size == self.coef.size
+        ):
+            se_matrix = self.standard_errors.reshape(self.coef.shape)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                z_scores = np.divide(
+                    self.coef,
+                    se_matrix,
+                    out=np.zeros_like(self.coef),
+                    where=se_matrix != 0,
+                )
+            p_values = 2 * (1 - norm.cdf(np.abs(z_scores)))
+
+            lines.append("Coefficients with Inference")
+            lines.append("alt  k     coef      se        z       p")
+            num_alts, num_k = self.coef.shape
+            for i in range(num_alts):
+                for j in range(num_k):
+                    lines.append(
+                        f"{i + 1:3d}  {j:1d}  "
+                        f"{self.coef[i, j]:8.4f}  {se_matrix[i, j]:6.4f}  "
+                        f"{z_scores[i, j]:8.4f}  {p_values[i, j]:6.4f}"
+                    )
+        else:
+            lines.append("Coefficients")
+            header = "alt  k   " + "  ".join(
+                f"coef_k{j}" for j in range(self.coef.shape[1])
+            )
+            lines.append(header)
+            for i, row in enumerate(self.coef):
+                coef_str = "  ".join(f"{v:8.4f}" for v in row)
+                lines.append(f"{i + 1:3d}  -   {coef_str}")
+
+        if self.optimization_result is not None:
+            opt = self.optimization_result
+            lines.append(
+                f"Optimizer: success={opt.success}, fun={opt.fun:.4f}, iterations={opt.nit}, evals={getattr(opt, 'nfev', 'n/a')}"
+            )
+            if verbose:
+                status = getattr(opt, "status", "n/a")
+                message = getattr(opt, "message", "")
+                njev = getattr(opt, "njev", "n/a")
+                grad_norm = None
+                if hasattr(opt, "jac") and opt.jac is not None:
+                    jac = np.asarray(opt.jac)
+                    grad_norm = float(np.linalg.norm(jac))
+
+                lines.append(f"Status: {status}")
+                lines.append(f"Message: {message}")
+                lines.append(
+                    f"Grad norm: {grad_norm:.6f}"
+                    if grad_norm is not None
+                    else "Grad norm: n/a"
+                )
+                lines.append(f"Grad evals: {njev}")
+
+        return "\n".join(lines)
 
 
 class MultichoiceLogit:
@@ -394,7 +461,7 @@ class MultichoiceLogit:
 
     def fit(
         self,
-        X: npt.NDArray[np.float64] | Any,
+        X: npt.ArrayLike,
         y_single: npt.NDArray[np.int8] | None = None,
         y_dual: DualInput | None = None,
         choices: Sequence[int | tuple[int, int]] | None = None,
@@ -510,7 +577,7 @@ class MultichoiceLogit:
 
     def fit_choices(
         self,
-        X: npt.NDArray[np.float64] | Any,
+        X: npt.ArrayLike,
         choices: Sequence[int | tuple[int, int]],
         **kwargs: Any,
     ) -> MultichoiceLogit:

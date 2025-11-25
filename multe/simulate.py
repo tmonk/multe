@@ -10,13 +10,17 @@ from __future__ import annotations
 
 import typing
 from collections.abc import Sequence
+from typing import TypeAlias
 
 import numpy as np
 import numpy.typing as npt
 
+Choice: TypeAlias = int | tuple[int, int]
+ChoicesSeq: TypeAlias = Sequence[Choice]
+
 
 def parse_choices(
-    choices: Sequence[int | tuple[int, int]] | np.ndarray,
+    choices: ChoicesSeq | np.ndarray,
     J: int,
 ) -> tuple[npt.NDArray[np.int8], npt.NDArray[np.int8]]:
     """
@@ -96,9 +100,7 @@ def simulate_choices(
     seed: int | None = 42,
     rng: np.random.Generator | None = None,
     dtype: npt.DTypeLike = np.float64,
-) -> tuple[
-    npt.NDArray[np.float64], list[int | tuple[int, int]], npt.NDArray[np.float64]
-]:
+) -> tuple[npt.NDArray[np.float64], list[Choice], npt.NDArray[np.float64]]:
     """
     Simulate data and return a choices list alongside X and true parameters.
 
