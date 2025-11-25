@@ -515,8 +515,34 @@ class TestFitMethod:
 
         assert res.coef.shape == (J - 1, K)
         summary = res.summary()
-        assert "Coefficients:" in summary
-        assert "p-values:" in summary
+        assert "Coefficients with Inference" in summary
+
+    def test_summary_without_standard_errors(self):
+        """Summary still renders when standard errors are absent."""
+        N, J, K = 40, 3, 1
+        X, y_single, y_dual, _ = simulate_data(N, J, K, seed=21)
+        model = MultichoiceLogit(J, K)
+        model.fit(X, y_single, y_dual)
+
+        res = model.get_result()
+        summary = res.summary()
+
+        assert "Coefficients" in summary
+        assert "Optimizer" in summary
+
+    def test_summary_verbose_includes_optimizer_details(self):
+        """Verbose summary prints optimizer meta rows."""
+        N, J, K = 50, 3, 1
+        X, y_single, y_dual, _ = simulate_data(N, J, K, seed=5)
+        model = MultichoiceLogit(J, K)
+        model.fit(X, y_single, y_dual)
+
+        res = model.get_result()
+        summary = res.summary(verbose=True)
+
+        assert "Optimizer" in summary
+        assert "status" in summary
+        assert "grad norm" in summary
 
     def test_fit_requires_complete_inputs(self):
         """Fit raises if neither choices nor both matrices are provided."""

@@ -74,6 +74,20 @@ class TestParseChoices:
         _, y_dual = parse_choices([(3, 1)], J=4)
         assert y_dual[0, 1, 3] == 1
 
+    def test_parse_choices_pandas_and_invalid(self):
+        import pandas as pd
+
+        choices_series = pd.Series([0, (1, 2)])
+        y_single, y_dual = parse_choices(choices_series, J=3)
+        assert y_single.shape == (2, 3)
+        assert y_dual.sum() == 1
+
+        with pytest.raises(ValueError, match="J must be >= 2"):
+            parse_choices([0], J=1)
+
+        with pytest.raises(ValueError, match="must be int or tuple"):
+            parse_choices([{"a": 1}], J=3)
+
 
 class TestSimulateChoices:
     """Tests for simulate_choices helper."""
